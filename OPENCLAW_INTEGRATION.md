@@ -21,31 +21,31 @@ Telegram / Discord
                 └── PostgreSQL + pgvector (fully local)
 ```
 
-## Files Changed vs main
+## Files in this branch
 
 | File | Purpose |
 |------|---------|
-| `~/.mcporter/mcporter.json` | Registers OpenBrain as a system MCP server |
-| `~/.openclaw/workspace/OPENBRAIN.md` | Teaches the agent when and how to use OpenBrain |
+| `deploy/OPENBRAIN.md` | Agent instructions — copied to `~/.openclaw/workspace/` by setup script |
+| `scripts/setup-personal.sh` | One-shot: writes mcporter.json with credentials + installs OPENBRAIN.md |
+| `scripts/setup-mcp.sh` | Register with Claude Code (run separately) |
 
 ## Setup (first time)
 
 ```bash
-# 1. Set up the database (from main)
-cp .env.example .env
-bash scripts/setup-db.sh
+# 1. Database — reuse the existing .env (already configured)
+bash scripts/setup-db.sh   # only needed on a new machine
 
-# 2. Install pixi dependencies (downloads fastembed model on first run)
+# 2. Install pixi dependencies
 pixi install
 
-# 3. Verify mcporter can see OpenBrain
-mcporter config list
+# 3. Personal/OpenClaw wiring — writes mcporter.json + installs OPENBRAIN.md
+bash scripts/setup-personal.sh
 
-# 4. Test the MCP connection
-mcporter call openbrain.brain_stats
+# 4. Claude Code MCP registration
+bash scripts/setup-mcp.sh
 
-# 5. Restart the OpenClaw gateway so it picks up OPENBRAIN.md
-openclaw gateway restart   # or restart the openclaw service
+# 5. Restart OpenClaw so it picks up OPENBRAIN.md
+openclaw gateway restart
 ```
 
 ## Usage via Telegram
