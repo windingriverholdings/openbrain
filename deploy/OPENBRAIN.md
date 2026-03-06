@@ -4,7 +4,11 @@ OpenBrain is your persistent, searchable knowledge base. It stores thoughts, dec
 insights, and memories as vector embeddings in a local PostgreSQL database.
 **No cloud. No external dependency. Fully private.**
 
-Call it via `mcporter call openbrain.<tool> [args]`.
+Call it via mcporter (use full path — nvm is not on the sandbox PATH):
+```
+MCPORTER=/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter
+$MCPORTER call openbrain.<tool> [args]
+```
 
 ---
 
@@ -14,14 +18,14 @@ Call it via `mcporter call openbrain.<tool> [args]`.
 search OpenBrain first. Don't rely only on this session's context.
 
 ```bash
-mcporter call openbrain.search_thoughts query="your natural language question" top_k=5
+/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.search_thoughts query="your natural language question" top_k=5
 ```
 
 **Capture high-value content** — after any conversation where a real decision, insight,
 or important person/meeting comes up, save it:
 
 ```bash
-mcporter call openbrain.capture_thought \
+/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.capture_thought \
   content="We decided to use fastembed over Ollama because it runs in-process" \
   thought_type="decision" \
   tags='["openbrain","infrastructure"]' \
@@ -31,19 +35,19 @@ mcporter call openbrain.capture_thought \
 **Weekly review** — when Craig asks for a weekly review or summary:
 
 ```bash
-mcporter call openbrain.weekly_review days=7
+/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.weekly_review days=7
 ```
 
 **Stats** — when asked how much is in the brain:
 
 ```bash
-mcporter call openbrain.brain_stats
+/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.brain_stats
 ```
 
 **Bulk import** — after a memory migration or batch of notes:
 
 ```bash
-mcporter call openbrain.bulk_import thoughts='[{"content":"...","thought_type":"memory"}]' source="import"
+/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.bulk_import thoughts='[{"content":"...","thought_type":"memory"}]' source="import"
 ```
 
 ---
