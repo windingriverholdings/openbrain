@@ -31,6 +31,14 @@ class Config(BaseSettings):
     search_top_k: int = Field(default=10)
     search_score_threshold: float = Field(default=0.35)
 
+    # Telegram bot (work branch — direct, no OpenClaw)
+    telegram_bot_token: str = Field(default="")
+    telegram_allowed_user_id: int = Field(default=0)
+
+    # Web UI
+    web_host: str = Field(default="127.0.0.1")
+    web_port: int = Field(default=10203)
+
     @property
     def db_url(self) -> str:
         return (

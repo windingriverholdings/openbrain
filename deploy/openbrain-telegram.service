@@ -1,0 +1,35 @@
+[Unit]
+Description=OpenBrain Telegram Bot
+Documentation=https://github.com/craig8/my-openbrain
+After=network.target postgresql.service openbrain-web.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/repos/my-openbrain
+
+EnvironmentFile=/home/%i/repos/my-openbrain/.env
+
+ExecStart=/home/%i/repos/my-openbrain/.pixi/envs/default/bin/python \
+    -m openbrain.telegram_bot
+
+Environment=PYTHONPATH=/home/%i/repos/my-openbrain/src
+
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openbrain-telegram
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/repos/my-openbrain /home/%i/.cache/huggingface
+
+# TODO(tailscale): Switch from polling to webhook for lower latency.
+#                  Set OPENBRAIN_WEBHOOK_URL + OPENBRAIN_WEBHOOK_SECRET in .env
+#                  and update telegram_bot.py to use webhook mode.
+
+[Install]
+WantedBy=multi-user.target
