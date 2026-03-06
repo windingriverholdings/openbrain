@@ -27,10 +27,12 @@ StandardError=journal
 SyslogIdentifier=openbrain-web
 
 # Harden the service
+# NOTE: ReadWritePaths requires the directories to exist before service start.
+#       Run scripts/install-services.sh which calls mkdir -p on all cache dirs.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/%i/repos/my-openbrain /home/%i/.cache/huggingface
+ReadWritePaths=/home/%i/repos/my-openbrain /home/%i/.cache/huggingface /home/%i/.cache/fastembed
 
 # TODO(tailscale): When exposing over Tailscale, change OPENBRAIN_WEB_HOST
 #                  to 0.0.0.0 (or your Tailscale IP) and add Caddy in front

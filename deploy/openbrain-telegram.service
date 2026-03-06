@@ -22,10 +22,12 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=openbrain-telegram
 
+# NOTE: ReadWritePaths requires the directories to exist before service start.
+#       Run scripts/install-services.sh which calls mkdir -p on all cache dirs.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/%i/repos/my-openbrain /home/%i/.cache/huggingface
+ReadWritePaths=/home/%i/repos/my-openbrain /home/%i/.cache/huggingface /home/%i/.cache/fastembed
 
 # TODO(tailscale): Switch from polling to webhook for lower latency.
 #                  Set OPENBRAIN_WEBHOOK_URL + OPENBRAIN_WEBHOOK_SECRET in .env

@@ -11,6 +11,12 @@ DEPLOY_DIR="$REPO_DIR/deploy"
 echo "Installing OpenBrain services for user: $USER"
 echo "Repo: $REPO_DIR"
 
+# ── Pre-create cache directories (required by systemd ReadWritePaths) ────────
+# systemd ProtectHome+ReadWritePaths fails at namespace setup if dirs don't exist.
+su - "$USER" -c "mkdir -p ~/.cache/huggingface ~/.cache/fastembed" 2>/dev/null || \
+    mkdir -p "/home/$USER/.cache/huggingface" "/home/$USER/.cache/fastembed"
+echo "✓ Cache directories ready"
+
 # ── /etc/hosts — add mybrain.local ──────────────────────────────────────────
 HOSTS_ENTRY="127.0.0.1  mybrain.local"
 
