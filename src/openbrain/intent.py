@@ -71,10 +71,10 @@ _REVIEW_PATTERNS = re.compile(
 )
 
 _STATS_PATTERNS = re.compile(
-    r"(^stats$|statistics|how many (thoughts|memories|notes)|"
+    r"(^stats?$|statistics|how many (thoughts|memories|notes)|"
     r"brain stats|knowledge base stats|^count$"
-    r"|send me (some |the |my )?stats|give me (some |the |my )?stats"
-    r"|show me (some |the |my )?stats|what are (my |the )?stats)",
+    r"|send me (some |the |my )?(stats?|status)|give me (some |the |my )?(stats?|status)"
+    r"|show me (some |the |my )?(stats?|status)|what (are|is) (my |the )?(stats?|status))",
     re.IGNORECASE,
 )
 

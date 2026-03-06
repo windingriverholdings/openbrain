@@ -41,7 +41,7 @@ async def _capture(parsed: ParsedIntent, source: str) -> str:
         source=source,
     )
     type_label = parsed.thought_type.capitalize()
-    return f"Got it. Saved as **{type_label}**. `{thought_id[:8]}…`"
+    return f"Got it. Saved as {type_label}. ({thought_id[:8]})"
 
 
 async def _search(query: str) -> str:
@@ -55,26 +55,25 @@ async def _search(query: str) -> str:
             return (
                 "Your brain is empty — no thoughts stored yet.\n\n"
                 "Start capturing with sentences like:\n"
-                "- *decided to use Python for this project*\n"
-                "- *realised that mornings are my best thinking time*\n"
-                "- *met Alice Chen, she runs design at Acme*\n\n"
+                "- decided to use Python for this project\n"
+                "- realised that mornings are my best thinking time\n"
+                "- met Alice Chen, she runs design at Acme\n\n"
                 "Once you have thoughts stored, search will find them."
             )
         return (
-            f"Nothing found matching: *{query}*\n\n"
-            f"Your brain has **{total}** thought(s) — try a different search term, "
-            f"or lower the score threshold in your `.env`."
+            f"Nothing found matching: {query}\n\n"
+            f"Your brain has {total} thought(s) — try a different search term."
         )
 
-    lines = [f"**{len(results)} result(s)** for: *{query}*\n"]
+    lines = [f"{len(results)} result(s) for: {query}\n"]
     for i, r in enumerate(results, 1):
         date = r["created_at"][:10]
         lines.append(
-            f"{i}. `{r['thought_type']}` · {date} · score {r['score']}\n"
+            f"{i}. [{r['thought_type']}] {date} (score {r['score']})\n"
             f"   {r['content']}"
         )
         if r.get("tags"):
-            lines.append(f"   *{', '.join(r['tags'])}*")
+            lines.append(f"   tags: {', '.join(r['tags'])}")
     return "\n".join(lines)
 
 
@@ -91,9 +90,9 @@ async def _review() -> str:
     for t in thoughts:
         by_type.setdefault(t["thought_type"], []).append(t)
 
-    lines = [f"**Weekly Review** — {len(thoughts)} thoughts\n"]
+    lines = [f"Weekly Review — {len(thoughts)} thoughts\n"]
     for thought_type, items in sorted(by_type.items()):
-        lines.append(f"**{thought_type.title()}s** ({len(items)})")
+        lines.append(f"{thought_type.title()}s ({len(items)})")
         for item in items:
             lines.append(f"- [{item['created_at'][:10]}] {item['content']}")
         lines.append("")
@@ -104,17 +103,14 @@ async def _stats() -> str:
     s = await get_stats()
     total = s.get("total", 0)
     if total == 0:
-        return (
-            "**OpenBrain Stats**\n"
-            "Your brain is empty. Start capturing thoughts to see stats here."
-        )
+        return "OpenBrain Stats\nYour brain is empty. Start capturing thoughts to see stats here."
     lines = [
-        "**OpenBrain Stats**",
-        f"Total: **{total}** thoughts",
-        f"This week: **{s['this_week']}** · Today: **{s['today']}**",
+        "OpenBrain Stats",
+        f"Total: {total} thoughts",
+        f"This week: {s['this_week']} · Today: {s['today']}",
     ]
     if s.get("by_type"):
         lines.append("\nBy type:")
         for t, n in s["by_type"].items():
-            lines.append(f"  `{t}` — {n}")
+            lines.append(f"  {t}: {n}")
     return "\n".join(lines)
