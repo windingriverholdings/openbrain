@@ -10,12 +10,12 @@
       --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a; --border: #2e3350;
       --accent: #6c8ef5; --accent-dim: #3d4f8a; --text: #e2e4f0; --text-dim: #7b82a8;
       --green: #4ade80; --amber: #fbbf24; --red: #f87171;
-      --radius: 10px; --font: 'Inter', system-ui, sans-serif;
+      --radius: 10px; --font: 'Inter', system-ui, sans-serif; --base-size: 18px;
       --mono: 'JetBrains Mono', 'Fira Code', monospace;
     }
-    body { background: var(--bg); color: var(--text); font-family: var(--font); height: 100dvh; display: flex; flex-direction: column; }
+    body { background: var(--bg); color: var(--text); font-size: var(--base-size); font-family: var(--font); height: 100dvh; display: flex; flex-direction: column; }
     header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-    header h1 { font-size: 1rem; font-weight: 600; }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
     header .status { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-dim); }
     header .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); transition: background 0.3s; }
     header .dot.connected { background: var(--green); }
@@ -26,7 +26,7 @@
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
     .msg.user { align-self: flex-end; align-items: flex-end; }
     .msg.brain { align-self: flex-start; align-items: flex-start; }
-    .bubble { padding: 10px 14px; border-radius: var(--radius); line-height: 1.55; font-size: 0.9rem; white-space: pre-wrap; word-break: break-word; }
+    .bubble { padding: 10px 14px; border-radius: var(--radius); line-height: 1.55; font-size: 1rem; white-space: pre-wrap; word-break: break-word; }
     .msg.user .bubble { background: var(--accent-dim); border-bottom-right-radius: 3px; }
     .msg.brain .bubble { background: var(--surface2); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
     .bubble .md-bold { font-weight: 600; color: #fff; }
@@ -45,7 +45,7 @@
     .dot-pulse:nth-child(3) { animation-delay: 0.4s; }
     @keyframes pulse { 0%,80%,100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
     #input-bar { padding: 14px 20px; background: var(--surface); border-top: 1px solid var(--border); display: flex; gap: 10px; flex-shrink: 0; }
-    #input { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; color: var(--text); font-family: var(--font); font-size: 0.9rem; outline: none; resize: none; line-height: 1.5; max-height: 120px; transition: border-color 0.2s; }
+    #input { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; color: var(--text); font-family: var(--font); font-size: 1rem; outline: none; resize: none; line-height: 1.5; max-height: 120px; transition: border-color 0.2s; }
     #input:focus { border-color: var(--accent-dim); }
     #input::placeholder { color: var(--text-dim); }
     #send { background: var(--accent); border: none; border-radius: var(--radius); padding: 10px 18px; color: #fff; font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: opacity 0.15s; align-self: flex-end; }
