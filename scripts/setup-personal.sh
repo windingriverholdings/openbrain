@@ -9,7 +9,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="$REPO_DIR/.pixi/envs/default/bin/python"
 ENV_FILE="$REPO_DIR/.env"
 MCPORTER_JSON="${HOME}/.mcporter/mcporter.json"
-OPENCLAW_WORKSPACE="${HOME}/.openclaw/workspace"
+OPENCLAW_WORKSPACE=$(find "${HOME}/.openclaw/sandboxes" -maxdepth 1 -name "agent-main-*" -type d 2>/dev/null | head -1)
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 if [[ ! -f "$PYTHON" ]]; then
@@ -71,12 +71,12 @@ MCPORTER
 echo "  mcporter.json written to $MCPORTER_JSON"
 
 # ── OpenClaw workspace: install OPENBRAIN.md ──────────────────────────────────
-if [[ -d "$OPENCLAW_WORKSPACE" ]]; then
+if [[ -n "$OPENCLAW_WORKSPACE" && -d "$OPENCLAW_WORKSPACE" ]]; then
     cp "$REPO_DIR/deploy/OPENBRAIN.md" "$OPENCLAW_WORKSPACE/OPENBRAIN.md"
     echo "  OPENBRAIN.md installed to $OPENCLAW_WORKSPACE/"
 else
-    echo "  Warning: $OPENCLAW_WORKSPACE not found — skipping OPENBRAIN.md install"
-    echo "           Create the directory and copy deploy/OPENBRAIN.md manually."
+    echo "  Warning: ~/.openclaw/sandboxes/agent-main-* not found — skipping OPENBRAIN.md install"
+    echo "           Copy deploy/OPENBRAIN.md into your OpenClaw main agent sandbox manually."
 fi
 
 # ── Smoke test: can the MCP server start? ────────────────────────────────────
