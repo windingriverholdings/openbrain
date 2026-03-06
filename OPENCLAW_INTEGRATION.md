@@ -66,3 +66,64 @@ Once running, just talk to OpenClaw naturally:
 The agent (via OPENBRAIN.md instructions) acts as the intelligence layer.
 It decides what's worth storing — not every message gets captured, only
 meaningful decisions, insights, people, and events.
+
+---
+
+## Sandbox Security Model
+
+OpenClaw runs the agent inside an isolated container sandbox. Understanding
+what the sandbox can and cannot do is important for both security and debugging.
+
+### What the sandbox has
+
+| Capability | Available |
+|---|---|
+| Read/write files in `/workspace` | Yes |
+| Run shell commands in the container | Yes (container builtins only) |
+| OpenClaw session tools (spawn/list/send/status) | Yes |
+| Host binaries (mcporter, curl, wget, python, git) | **No** |
+| Network access to host localhost | **No** |
+| Host filesystem outside `/workspace` | **No** |
+
+### Why this is good for security
+
+- A compromised agent prompt cannot execute arbitrary host processes
+- A compromised agent cannot exfiltrate data via network calls
+- OpenBrain credentials (DB password, bot tokens) never enter the sandbox
+- The agent can only express intent through files — the host daemon validates and executes
+
+### How the file bridge works
+
+```
+Sandbox (/workspace)                  Host (openbrain-watchd daemon)
+─────────────────────                 ──────────────────────────────
+Agent writes:                         Polls every 500ms for request file
+openbrain-request.json                    │
+{"cmd":"search","query":"..."}            │ picks it up
+                                          │ calls OpenBrain directly
+                                          │ (has DB credentials)
+                                          │ writes response
+Agent reads:                          openbrain-response.json
+{"ok":true,"result":{...}}                │ deletes request file
+```
+
+### Credential isolation
+
+```
+.env (host only, never enters sandbox)
+  └── openbrain-watchd reads at startup
+        └── connects to PostgreSQL directly
+              └── writes results to /workspace/openbrain-response.json
+                    └── agent reads plain JSON — no credentials exposed
+```
+
+The agent sees results, never secrets.
+
+### Bridge files
+
+| File | Location | Purpose |
+|---|---|---|
+| `deploy/openbrain-sandbox` | copied to `/workspace/.local/bin/openbrain` | Agent-facing sh wrapper — writes request, waits for response |
+| `scripts/openbrain-watchd.py` | runs on host via systemd | Polls for requests, dispatches to OpenBrain, writes responses |
+| `deploy/openbrain-watchd.service` | `~/.config/systemd/user/` | Keeps watchd running, auto-restarts on failure |
+| `deploy/OPENBRAIN.md` | copied to `/workspace/OPENBRAIN.md` | Tells the agent what OpenBrain is and how to call it |

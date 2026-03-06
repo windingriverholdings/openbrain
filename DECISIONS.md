@@ -101,6 +101,19 @@
 
 ---
 
+### 013 — OpenClaw Integration: File Bridge Over Binary/Network Bridge
+**Date:** 2026-03-05
+**Decision:** OpenBrain is exposed to the OpenClaw agent via a file-based RPC bridge rather than a binary CLI or HTTP call.
+**Rationale:** OpenClaw runs the agent inside an isolated sandbox container (`~/.openclaw/sandboxes/agent-main-*/`). The sandbox has no access to host binaries (no mcporter, curl, wget, python) and no guaranteed network path to localhost. The only reliable capability is file read/write to `/workspace` (which maps to the sandbox directory on the host). The file bridge exploits this: the agent writes a JSON request file, a host-side daemon (`openbrain-watchd`) picks it up, calls OpenBrain directly, and writes back a JSON response file. This requires zero binaries and zero network access from inside the sandbox.
+**Security properties gained:**
+- The agent cannot directly invoke host processes or binaries
+- The agent cannot make arbitrary network calls
+- OpenBrain credentials (DB password) never enter the sandbox — only the watchd daemon holds them
+- The attack surface from a compromised agent prompt is limited to what can be expressed in a JSON request file
+**Alternatives considered:** mcporter CLI (not available in sandbox PATH), curl/wget HTTP calls (neither available), Python urllib (no Python in sandbox), spawn sub-agent (adds orchestration complexity and latency).
+
+---
+
 ### 012 — Tailscale: Deferred, TODOs placed throughout codebase
 **Date:** 2026-03-05
 **Decision:** Local-only for now. All Tailscale expansion points are marked with `# TODO(tailscale):` comments.
