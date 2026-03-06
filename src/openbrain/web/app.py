@@ -14,13 +14,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 import structlog
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from ..brain import dispatch
+from ..config import get_config
+from ..db import get_stats, get_thoughts_since, insert_thought, search_thoughts
+from ..embeddings import embed
 from ..intent import parse
 
 logger = structlog.get_logger(__name__)
@@ -39,6 +44,59 @@ async def index() -> HTMLResponse:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": "openbrain-web"}
+
+
+# ── REST API (for sandbox / scripted access) ─────────────────────────────────
+
+class CaptureRequest(BaseModel):
+    content: str
+    thought_type: str = "note"
+    tags: list[str] = []
+    source: str = "api"
+    summary: Optional[str] = None
+
+
+@app.get("/api/search")
+async def api_search(
+    q: str = Query(..., description="Natural language search query"),
+    top_k: int = Query(5, ge=1, le=50),
+) -> dict:
+    config = get_config()
+    vec = embed(q)
+    results = await search_thoughts(
+        embedding=vec,
+        top_k=top_k,
+        score_threshold=config.search_score_threshold,
+    )
+    return {"query": q, "count": len(results), "results": results}
+
+
+@app.post("/api/capture")
+async def api_capture(req: CaptureRequest) -> dict:
+    vec = embed(req.content)
+    thought_id = await insert_thought(
+        content=req.content,
+        embedding=vec,
+        thought_type=req.thought_type,
+        tags=req.tags,
+        source=req.source,
+        summary=req.summary,
+    )
+    return {"id": thought_id, "thought_type": req.thought_type}
+
+
+@app.get("/api/stats")
+async def api_stats() -> dict:
+    return await get_stats()
+
+
+@app.get("/api/review")
+async def api_review(days: int = Query(7, ge=1, le=365)) -> dict:
+    thoughts = await get_thoughts_since(days)
+    by_type: dict[str, list] = {}
+    for t in thoughts:
+        by_type.setdefault(t["thought_type"], []).append(t)
+    return {"days": days, "total": len(thoughts), "by_type": by_type}
 
 
 @app.websocket("/ws")

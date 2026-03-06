@@ -4,10 +4,9 @@ OpenBrain is your persistent, searchable knowledge base. It stores thoughts, dec
 insights, and memories as vector embeddings in a local PostgreSQL database.
 **No cloud. No external dependency. Fully private.**
 
-Call it via mcporter (use full path — nvm is not on the sandbox PATH):
+Call it via the `openbrain` wrapper in the sandbox bin dir:
 ```
-MCPORTER=/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter
-$MCPORTER call openbrain.<tool> [args]
+PATH=/workspace/.local/bin:$PATH openbrain <cmd> [args]
 ```
 
 ---
@@ -18,36 +17,28 @@ $MCPORTER call openbrain.<tool> [args]
 search OpenBrain first. Don't rely only on this session's context.
 
 ```bash
-/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.search_thoughts query="your natural language question" top_k=5
+PATH=/workspace/.local/bin:$PATH openbrain search "your natural language question" 5
 ```
 
 **Capture high-value content** — after any conversation where a real decision, insight,
 or important person/meeting comes up, save it:
 
 ```bash
-/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.capture_thought \
-  content="We decided to use fastembed over Ollama because it runs in-process" \
-  thought_type="decision" \
-  tags='["openbrain","infrastructure"]' \
-  source="telegram"
+PATH=/workspace/.local/bin:$PATH openbrain capture \
+  "We decided to use fastembed over Ollama because it runs in-process" \
+  decision openclaw
 ```
 
 **Weekly review** — when Craig asks for a weekly review or summary:
 
 ```bash
-/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.weekly_review days=7
+PATH=/workspace/.local/bin:$PATH openbrain review 7
 ```
 
 **Stats** — when asked how much is in the brain:
 
 ```bash
-/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.brain_stats
-```
-
-**Bulk import** — after a memory migration or batch of notes:
-
-```bash
-/home/craig8/.nvm/versions/node/v22.17.0/bin/mcporter call openbrain.bulk_import thoughts='[{"content":"...","thought_type":"memory"}]' source="import"
+PATH=/workspace/.local/bin:$PATH openbrain stats
 ```
 
 ---
