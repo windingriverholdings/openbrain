@@ -1,76 +1,61 @@
 #!/bin/sh
-# openbrain - thin REST client for OpenBrain service bridge
-# Place in /workspace/.local/bin/ and invoke as:
-#   PATH=/workspace/.local/bin:$PATH openbrain <cmd> [args]
-#
-# Requires: wget (tries 127.0.0.1, then host.docker.internal, then 172.17.0.1)
+# openbrain - file bridge client for OpenBrain
+# Writes /workspace/openbrain-request.json, waits for /workspace/openbrain-response.json
+# No wget, curl, python, or network access required — only file read/write.
 
-OPENBRAIN_PORT=10203
-
-# Auto-detect reachable host — try in order
-_find_host() {
-    for h in 127.0.0.1 host.docker.internal 172.17.0.1 10.0.2.2; do
-        if wget -q --timeout=1 -O/dev/null "http://${h}:${OPENBRAIN_PORT}/health" 2>/dev/null; then
-            echo "$h"
-            return 0
-        fi
-    done
-    echo "ERROR: cannot reach OpenBrain at any known host address" >&2
-    return 1
-}
-
-_host=$(_find_host) || exit 1
-BASE="http://${_host}:${OPENBRAIN_PORT}"
-
-_urlencode() {
-    # portable URL encoding via sed
-    printf '%s' "$1" | sed 's/ /%20/g;s/!/%21/g;s/"/%22/g;s/#/%23/g;s/\$/%24/g;s/&/%26/g;s/'"'"'/%27/g;s/(/%28/g;s/)/%29/g;s/\*/%2A/g;s/+/%2B/g;s/,/%2C/g;s/:/%3A/g;s/;/%3B/g;s/=/%3D/g;s/?/%3F/g;s/@/%40/g'
-}
+WORKSPACE=/workspace
+REQ="$WORKSPACE/openbrain-request.json"
+RESP="$WORKSPACE/openbrain-response.json"
+TIMEOUT=10  # seconds to wait for host daemon
 
 CMD="$1"
 shift 2>/dev/null || true
 
+# Clean up any stale files from prior run
+rm -f "$REQ" "$RESP"
+
 case "$CMD" in
     search)
-        # openbrain search "query text" [top_k]
-        QUERY="$1"
-        TOP_K="${2:-5}"
-        Q=$(_urlencode "$QUERY")
-        wget -q -O- "${BASE}/api/search?q=${Q}&top_k=${TOP_K}"
-        echo
+        QUERY="$1"; TOP_K="${2:-5}"
+        printf '{"cmd":"search","query":"%s","top_k":%s}' \
+            "$(echo "$QUERY" | sed 's/"/\\"/g')" "$TOP_K" > "$REQ"
         ;;
     capture)
-        # openbrain capture "content" [thought_type] [source]
-        CONTENT="$1"
-        TYPE="${2:-note}"
-        SOURCE="${3:-openclaw}"
-        BODY=$(printf '{"content":"%s","thought_type":"%s","source":"%s"}' \
-            "$(echo "$CONTENT" | sed 's/"/\\"/g')" "$TYPE" "$SOURCE")
-        wget -q -O- --post-data="$BODY" \
-            --header="Content-Type: application/json" \
-            "${BASE}/api/capture"
-        echo
+        CONTENT="$1"; TYPE="${2:-note}"; SOURCE="${3:-openclaw}"
+        printf '{"cmd":"capture","content":"%s","thought_type":"%s","source":"%s"}' \
+            "$(echo "$CONTENT" | sed 's/"/\\"/g')" "$TYPE" "$SOURCE" > "$REQ"
         ;;
     stats)
-        wget -q -O- "${BASE}/api/stats"
-        echo
+        printf '{"cmd":"stats"}' > "$REQ"
         ;;
     review)
         DAYS="${1:-7}"
-        wget -q -O- "${BASE}/api/review?days=${DAYS}"
-        echo
-        ;;
-    health)
-        wget -q -O- "${BASE}/health"
-        echo
+        printf '{"cmd":"review","days":%s}' "$DAYS" > "$REQ"
         ;;
     *)
-        echo "Usage: openbrain <search|capture|stats|review|health> [args]"
+        echo "Usage: openbrain <search|capture|stats|review> [args]"
         echo ""
-        echo "  openbrain search \"query text\" [top_k]"
-        echo "  openbrain capture \"content text\" [thought_type] [source]"
+        echo "  openbrain search \"query\" [top_k]"
+        echo "  openbrain capture \"content\" [thought_type] [source]"
         echo "  openbrain stats"
         echo "  openbrain review [days]"
         exit 1
         ;;
 esac
+
+# Wait for host daemon to process and write response
+i=0
+while [ $i -lt $((TIMEOUT * 10)) ]; do
+    if [ -f "$RESP" ]; then
+        cat "$RESP"
+        echo
+        rm -f "$RESP"
+        exit 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+done
+
+echo '{"ok":false,"error":"timeout: openbrain-watchd not responding — is it running on the host?"}' >&2
+rm -f "$REQ"
+exit 1
