@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # OpenBrain: Register as an MCP server with Claude Code.
 # Run this on any machine after cloning the repo and running pixi install.
-# Safe to re-run — only adds/updates the openbrain entry.
+# Safe to re-run — removes and re-adds the entry cleanly.
 
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="$REPO_DIR/.pixi/envs/default/bin/python"
-CLAUDE_CONFIG="$HOME/.claude.json"
 ENV_FILE="$REPO_DIR/.env"
 
 if [[ ! -f "$PYTHON" ]]; then
@@ -30,46 +29,24 @@ if [[ -z "$DB_PASSWORD" || "$DB_PASSWORD" == "change_me" ]]; then
     exit 1
 fi
 
-# ── Update ~/.claude.json ────────────────────────────────────────────────────
-if [[ ! -f "$CLAUDE_CONFIG" ]]; then
-    echo '{"mcpServers": {}}' > "$CLAUDE_CONFIG"
-    echo "Created $CLAUDE_CONFIG"
-fi
+# ── Register via claude mcp add (handles permissions correctly) ──────────────
+claude mcp remove openbrain 2>/dev/null || true
 
-"$PYTHON" - <<PYEOF
-import json
-
-config_path = "$CLAUDE_CONFIG"
-repo_dir    = "$REPO_DIR"
-python      = "$PYTHON"
-db_password = "$DB_PASSWORD"
-
-with open(config_path) as f:
-    config = json.load(f)
-
-config.setdefault("mcpServers", {})["openbrain"] = {
-    "command": python,
-    "args": ["-m", "openbrain.server"],
-    "env": {
-        "PYTHONPATH": f"{repo_dir}/src",
-        "OPENBRAIN_DB_HOST": "localhost",
-        "OPENBRAIN_DB_PORT": "5432",
-        "OPENBRAIN_DB_NAME": "openbrain",
-        "OPENBRAIN_DB_USER": "openbrain",
-        "OPENBRAIN_DB_PASSWORD": db_password,
-    }
-}
-
-with open(config_path, "w") as f:
-    json.dump(config, f, indent=2)
-
-print(f"✓ OpenBrain registered in {config_path}")
-PYEOF
+claude mcp add openbrain \
+  --scope user \
+  -e PYTHONPATH="$REPO_DIR/src" \
+  -e OPENBRAIN_DB_HOST=localhost \
+  -e OPENBRAIN_DB_PORT=5432 \
+  -e OPENBRAIN_DB_NAME=openbrain \
+  -e OPENBRAIN_DB_USER=openbrain \
+  -e OPENBRAIN_DB_PASSWORD="$DB_PASSWORD" \
+  -- "$PYTHON" -m openbrain.server
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  OpenBrain is now available in Claude Code."
+echo "  OpenBrain registered with Claude Code."
 echo ""
-echo "  Test it: start a new Claude Code session and ask:"
-echo "    'Use the brain_stats tool to check my OpenBrain'"
+echo "  Verify: claude mcp list"
+echo "  Then start a new Claude Code session — the tools"
+echo "  will be available automatically."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
