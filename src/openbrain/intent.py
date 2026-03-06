@@ -64,19 +64,22 @@ _MEETING_HINT = re.compile(
 )
 
 _REVIEW_PATTERNS = re.compile(
-    r"^(weekly review|week review|review( the)? week|what happened this week"
-    r"|this week|past week|last 7 days|summarise( the)? week)",
+    r"(weekly review|week review|review( the)? week|what happened this week"
+    r"|this week|past week|last 7 days|summarise( the)? week"
+    r"|give me a (weekly |week )?review|show me (the )?(weekly |week )?review)",
     re.IGNORECASE,
 )
 
 _STATS_PATTERNS = re.compile(
-    r"^(stats|statistics|how many (thoughts|memories|notes)|"
-    r"brain stats|knowledge base stats|count)",
+    r"(^stats$|statistics|how many (thoughts|memories|notes)|"
+    r"brain stats|knowledge base stats|^count$"
+    r"|send me (some |the |my )?stats|give me (some |the |my )?stats"
+    r"|show me (some |the |my )?stats|what are (my |the )?stats)",
     re.IGNORECASE,
 )
 
 _HELP_PATTERNS = re.compile(
-    r"^(help|commands|what can you do|\?+|how (do|does) (this|it) work)",
+    r"(^help$|^commands$|^what can you do|^\?+$|^how (do|does) (this|it) work)",
     re.IGNORECASE,
 )
 
@@ -97,13 +100,13 @@ def parse(message: str) -> ParsedIntent:
     """Parse a natural language message into a structured intent."""
     msg = message.strip()
 
-    if _HELP_PATTERNS.match(msg):
+    if _HELP_PATTERNS.search(msg):
         return ParsedIntent(intent=Intent.HELP, text=msg)
 
-    if _STATS_PATTERNS.match(msg):
+    if _STATS_PATTERNS.search(msg):
         return ParsedIntent(intent=Intent.STATS, text=msg)
 
-    if _REVIEW_PATTERNS.match(msg):
+    if _REVIEW_PATTERNS.search(msg):
         return ParsedIntent(intent=Intent.REVIEW, text=msg)
 
     search_match = _SEARCH_PATTERNS.match(msg)

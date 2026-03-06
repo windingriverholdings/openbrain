@@ -14,7 +14,7 @@ import logging
 
 import structlog
 from telegram import Update
-from telegram.constants import ParseMode
+
 from telegram.ext import Application, ContextTypes, MessageHandler, CommandHandler, filters
 
 from .brain import dispatch
@@ -44,8 +44,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     parsed = parse(text)
     response = await dispatch(parsed, source="telegram")
 
-    # Telegram supports MarkdownV2 but it's fiddly — use plain Markdown
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(response)
 
 
 async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -54,7 +53,7 @@ async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     parsed = parse("help")
     response = await dispatch(parsed, source="telegram")
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(response)
 
 
 async def _cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -63,7 +62,7 @@ async def _cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     parsed = parse("stats")
     response = await dispatch(parsed, source="telegram")
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(response)
 
 
 async def _cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -72,7 +71,7 @@ async def _cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     parsed = parse("weekly review")
     response = await dispatch(parsed, source="telegram")
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(response)
 
 
 def run_bot() -> None:
