@@ -1,22 +1,20 @@
 [Unit]
 Description=OpenBrain Web UI (mybrain.local:10203)
-Documentation=https://github.com/craig8/my-openbrain
-After=network.target postgresql.service
-Wants=postgresql.service
+Documentation=https://github.com/windingriverholdings/my-openbrain
+After=network.target
 
 [Service]
 Type=simple
-User=%i
-WorkingDirectory=/home/%i/repos/my-openbrain
+WorkingDirectory=%h/repos/my-openbrain
 
 # Load env from .env file
-EnvironmentFile=/home/%i/repos/my-openbrain/.env
+EnvironmentFile=%h/repos/my-openbrain/.env
 
 # Use the pixi-managed Python
-ExecStart=/home/%i/repos/my-openbrain/.pixi/envs/default/bin/python \
+ExecStart=%h/repos/my-openbrain/.pixi/envs/default/bin/python \
     -m openbrain.web.app
 
-Environment=PYTHONPATH=/home/%i/repos/my-openbrain/src
+Environment=PYTHONPATH=%h/repos/my-openbrain/src
 Environment=OPENBRAIN_WEB_HOST=127.0.0.1
 Environment=OPENBRAIN_WEB_PORT=10203
 
@@ -32,7 +30,7 @@ SyslogIdentifier=openbrain-web
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/%i/repos/my-openbrain /home/%i/.cache/huggingface /home/%i/.cache/fastembed
+ReadWritePaths=%h/repos/my-openbrain %h/.cache/huggingface /home/%i/.cache/fastembed
 
 # TODO(tailscale): When exposing over Tailscale, change OPENBRAIN_WEB_HOST
 #                  to 0.0.0.0 (or your Tailscale IP) and add Caddy in front
@@ -40,4 +38,4 @@ ReadWritePaths=/home/%i/repos/my-openbrain /home/%i/.cache/huggingface /home/%i/
 #                  if binding to port 443 directly.
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

@@ -101,6 +101,20 @@
 
 ---
 
+### 014 — Systemd: User Services Over System Services
+**Date:** 2026-03-05
+**Decision:** All three daemons (openbrain-web, openbrain-telegram, openbrain-watchd) run as `systemd --user` services installed to `~/.config/systemd/user/`, not as system-level services in `/etc/systemd/system/`.
+**Rationale:**
+- **Least privilege:** Services run as the owning user, never as root. They cannot write to system directories or read other users' files.
+- **No sudo for daily operations:** `systemctl --user start/stop/restart/status` requires no elevated privileges.
+- **Credential isolation:** `.env` (containing DB password and bot token) is only readable by the user — a system service running as a different account couldn't access it.
+- **Simpler unit files:** No `User=%i` directive or template `@.service` pattern needed. `%h` resolves to the user's home directory automatically.
+- **Consistent with watchd:** The file bridge daemon was already a user service; this makes all three consistent.
+**Trade-off:** Services need `loginctl enable-linger <user>` to start at boot without an active login session. `install-services.sh` handles this automatically (requires sudo once).
+**The only steps requiring sudo:** Adding `mybrain.local` to `/etc/hosts` and running `loginctl enable-linger` — both one-time setup operations.
+
+---
+
 ### 013 — OpenClaw Integration: File Bridge Over Binary/Network Bridge
 **Date:** 2026-03-05
 **Decision:** OpenBrain is exposed to the OpenClaw agent via a file-based RPC bridge rather than a binary CLI or HTTP call.
