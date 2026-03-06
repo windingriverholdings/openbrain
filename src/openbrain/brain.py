@@ -49,7 +49,22 @@ async def _search(query: str) -> str:
     results = await search_thoughts(embedding=vec, top_k=8)
 
     if not results:
-        return f"Nothing found for: *{query}*"
+        stats = await get_stats()
+        total = stats.get("total", 0)
+        if total == 0:
+            return (
+                "Your brain is empty — no thoughts stored yet.\n\n"
+                "Start capturing with sentences like:\n"
+                "- *decided to use Python for this project*\n"
+                "- *realised that mornings are my best thinking time*\n"
+                "- *met Alice Chen, she runs design at Acme*\n\n"
+                "Once you have thoughts stored, search will find them."
+            )
+        return (
+            f"Nothing found matching: *{query}*\n\n"
+            f"Your brain has **{total}** thought(s) — try a different search term, "
+            f"or lower the score threshold in your `.env`."
+        )
 
     lines = [f"**{len(results)} result(s)** for: *{query}*\n"]
     for i, r in enumerate(results, 1):
@@ -66,6 +81,10 @@ async def _search(query: str) -> str:
 async def _review() -> str:
     thoughts = await get_thoughts_since(7)
     if not thoughts:
+        stats = await get_stats()
+        total = stats.get("total", 0)
+        if total == 0:
+            return "Your brain is empty — capture some thoughts first."
         return "No thoughts captured in the last 7 days."
 
     by_type: dict[str, list] = {}
@@ -83,9 +102,15 @@ async def _review() -> str:
 
 async def _stats() -> str:
     s = await get_stats()
+    total = s.get("total", 0)
+    if total == 0:
+        return (
+            "**OpenBrain Stats**\n"
+            "Your brain is empty. Start capturing thoughts to see stats here."
+        )
     lines = [
         "**OpenBrain Stats**",
-        f"Total: **{s['total']}** thoughts",
+        f"Total: **{total}** thoughts",
         f"This week: **{s['this_week']}** · Today: **{s['today']}**",
     ]
     if s.get("by_type"):
