@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "my-openbrain"
 version = "0.1.0"
 description = "Personal open-brain knowledge infrastructure via MCP + PostgreSQL RAG"
@@ -10,6 +10,7 @@ platforms = ["linux-64"]
 python = ">=3.11,<3.13"
 
 [pypi-dependencies]
+# Core
 mcp = ">=1.0.0"
 asyncpg = ">=0.29.0"
 fastembed = ">=0.4.0"
@@ -17,16 +18,28 @@ pydantic = ">=2.0.0"
 pydantic-settings = ">=2.0.0"
 python-dotenv = ">=1.0.0"
 structlog = ">=24.0.0"
+# Web UI
+fastapi = ">=0.115.0"
+uvicorn = {version = ">=0.30.0", extras = ["standard"]}
+websockets = ">=12.0"
+# Telegram bot
+python-telegram-bot = ">=21.0"
 
-[pypi-dependencies.dev]
+[feature.dev.pypi-dependencies]
 pytest = ">=8.0.0"
 pytest-asyncio = ">=0.23.0"
 pytest-cov = ">=5.0.0"
 
-[tasks]
-server = "python -m openbrain.server"
-setup-db = "bash scripts/setup-db.sh"
-test = "pytest tests/ -v --cov=src/openbrain --cov-report=term-missing"
+[environments]
+default = { features = [], solve-group = "default" }
+dev     = { features = ["dev"], solve-group = "default" }
 
-[tool.pixi.feature.dev.tasks]
-test-watch = "pytest tests/ -v --watch"
+[tasks]
+server   = "python -m openbrain.server"
+web      = "python -m openbrain.web.app"
+telegram = "python -m openbrain.telegram_bot"
+setup-db = "bash scripts/setup-db.sh"
+install-services = "sudo bash scripts/install-services.sh"
+
+[feature.dev.tasks]
+test = "pytest tests/ -v --cov=src/openbrain --cov-report=term-missing"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import asyncpg
@@ -30,16 +29,6 @@ async def get_pool() -> asyncpg.Pool:
             max_size=5,
             command_timeout=30,
         )
-        # Register pgvector codec so asyncpg handles vector columns transparently
-        async with _pool.acquire() as conn:
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            await conn.set_type_codec(
-                "vector",
-                encoder=_encode_vector,
-                decoder=_decode_vector,
-                schema="public",
-                format="text",
-            )
     return _pool
 
 
@@ -50,12 +39,9 @@ async def close_pool() -> None:
         _pool = None
 
 
-def _encode_vector(value: list[float]) -> str:
-    return "[" + ",".join(str(x) for x in value) + "]"
-
-
-def _decode_vector(value: str) -> list[float]:
-    return [float(x) for x in value.strip("[]").split(",")]
+def _vec(embedding: list[float]) -> str:
+    """Encode a float list as a pgvector literal: [0.1,0.2,...]"""
+    return "[" + ",".join(str(x) for x in embedding) + "]"
 
 
 # ── Thoughts ─────────────────────────────────────────────────────────────────
@@ -77,11 +63,11 @@ async def insert_thought(
     row = await pool.fetchrow(
         """
         INSERT INTO thoughts (content, embedding, thought_type, tags, source, summary, metadata)
-        VALUES ($1, $2, $3::thought_type, $4, $5, $6, $7)
+        VALUES ($1, $2::vector, $3::thought_type, $4, $5, $6, $7)
         RETURNING id
         """,
         content,
-        _encode_vector(embedding),
+        _vec(embedding),
         thought_type,
         tags or [],
         source,
@@ -105,7 +91,7 @@ async def search_thoughts(
     pool = await get_pool()
 
     filters = []
-    args: list[Any] = [_encode_vector(embedding), top_k]
+    args: list[Any] = [_vec(embedding), top_k]
     arg_idx = 3
 
     if thought_type:
@@ -131,10 +117,10 @@ async def search_thoughts(
             source,
             metadata,
             created_at,
-            1 - (embedding <=> $1) AS score
+            1 - (embedding <=> $1::vector) AS score
         FROM thoughts
         {where_clause}
-        ORDER BY embedding <=> $1
+        ORDER BY embedding <=> $1::vector
         LIMIT $2
         """,
         *args,
