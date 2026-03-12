@@ -24,7 +24,15 @@ from pydantic import BaseModel
 
 from ..brain import dispatch
 from ..config import get_config
-from ..db import get_stats, get_thoughts_since, insert_thought, search_thoughts
+from ..db import (
+    get_stats,
+    get_thought_timeline,
+    get_thoughts_since,
+    hybrid_search_thoughts,
+    insert_thought,
+    keyword_search_thoughts,
+    search_thoughts,
+)
 from ..embeddings import embed
 from ..intent import parse
 
@@ -60,15 +68,30 @@ class CaptureRequest(BaseModel):
 async def api_search(
     q: str = Query(..., description="Natural language search query"),
     top_k: int = Query(5, ge=1, le=50),
+    mode: str = Query("hybrid", description="Search mode: hybrid, vector, keyword"),
+    include_history: bool = Query(False, description="Include superseded thoughts"),
 ) -> dict:
     config = get_config()
-    vec = embed(q)
-    results = await search_thoughts(
-        embedding=vec,
-        top_k=top_k,
-        score_threshold=config.search_score_threshold,
-    )
-    return {"query": q, "count": len(results), "results": results}
+    if mode == "keyword":
+        results = await keyword_search_thoughts(
+            query_text=q, top_k=top_k, include_history=include_history,
+        )
+    elif mode == "vector":
+        vec = embed(q)
+        results = await search_thoughts(
+            embedding=vec,
+            top_k=top_k,
+            score_threshold=config.search_score_threshold,
+        )
+    else:
+        vec = embed(q)
+        results = await hybrid_search_thoughts(
+            query_text=q,
+            embedding=vec,
+            top_k=top_k,
+            include_history=include_history,
+        )
+    return {"query": q, "mode": mode, "count": len(results), "results": results}
 
 
 @app.post("/api/capture")
@@ -88,6 +111,15 @@ async def api_capture(req: CaptureRequest) -> dict:
 @app.get("/api/stats")
 async def api_stats() -> dict:
     return await get_stats()
+
+
+@app.get("/api/timeline")
+async def api_timeline(
+    subject: str = Query(..., description="Subject name to get timeline for"),
+    top_k: int = Query(20, ge=1, le=100),
+) -> dict:
+    timeline = await get_thought_timeline(subject, top_k=top_k)
+    return {"subject": subject, "count": len(timeline), "timeline": timeline}
 
 
 @app.get("/api/review")

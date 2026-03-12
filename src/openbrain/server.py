@@ -15,7 +15,17 @@ from mcp.types import (
 )
 
 from .config import get_config
-from .db import close_pool, get_stats, get_thoughts_since, insert_thought, search_thoughts
+from .db import (
+    close_pool,
+    get_stats,
+    get_thought_timeline,
+    get_thoughts_since,
+    hybrid_search_thoughts,
+    insert_thought,
+    keyword_search_thoughts,
+    link_subjects,
+    search_thoughts,
+)
 from .embeddings import embed, embed_batch
 
 logger = structlog.get_logger(__name__)
@@ -74,8 +84,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_thoughts",
             description=(
-                "Semantically search OpenBrain for thoughts related to a query. "
-                "Returns the most relevant thoughts ranked by cosine similarity."
+                "Search OpenBrain for thoughts related to a query. "
+                "Default mode is hybrid (keyword + semantic). "
+                "Use 'vector' for pure semantic or 'keyword' for exact term matching."
             ),
             inputSchema={
                 "type": "object",
@@ -89,6 +100,12 @@ async def list_tools() -> list[Tool]:
                         "description": "Maximum number of results to return.",
                         "default": 10,
                     },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["hybrid", "vector", "keyword"],
+                        "description": "Search mode: hybrid (keyword+semantic, default), vector (semantic only), keyword (full-text only).",
+                        "default": "hybrid",
+                    },
                     "thought_type": {
                         "type": "string",
                         "enum": ["decision", "insight", "person", "meeting", "idea", "note", "memory"],
@@ -98,6 +115,11 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Filter to thoughts that have ANY of these tags (optional).",
+                    },
+                    "include_history": {
+                        "type": "boolean",
+                        "description": "Include superseded thoughts (default: false, only current thoughts).",
+                        "default": False,
                     },
                 },
                 "required": ["query"],
@@ -158,6 +180,57 @@ async def list_tools() -> list[Tool]:
                 "required": ["thoughts"],
             },
         ),
+        Tool(
+            name="thought_timeline",
+            description=(
+                "Return the full history of thoughts about a subject, including superseded ones. "
+                "Shows how knowledge about a person, tool, or concept evolved over time."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subject": {
+                        "type": "string",
+                        "description": "Subject name to get timeline for (person, tool, concept, etc.).",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Maximum number of timeline entries.",
+                        "default": 20,
+                    },
+                },
+                "required": ["subject"],
+            },
+        ),
+        Tool(
+            name="extract_thoughts",
+            description=(
+                "Extract multiple structured thoughts from long-form text using LLM. "
+                "Pass in meeting notes, a conversation, or a long note and get back "
+                "individual typed thoughts with tags and subject links. "
+                "Requires LLM extraction to be enabled (OPENBRAIN_EXTRACT_PROVIDER != none)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The long-form text to extract thoughts from.",
+                    },
+                    "auto_capture": {
+                        "type": "boolean",
+                        "description": "If true, automatically capture extracted thoughts. If false, return candidates only.",
+                        "default": False,
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Source label for captured thoughts.",
+                        "default": "claude",
+                    },
+                },
+                "required": ["text"],
+            },
+        ),
     ]
 
 
@@ -176,6 +249,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
             return await _brain_stats()
         elif name == "bulk_import":
             return await _bulk_import(arguments)
+        elif name == "thought_timeline":
+            return await _thought_timeline(arguments)
+        elif name == "extract_thoughts":
+            return await _extract_thoughts(arguments)
         else:
             return CallToolResult(
                 content=[TextContent(type="text", text=f"Unknown tool: {name}")],
@@ -214,14 +291,32 @@ async def _capture_thought(args: dict[str, Any]) -> CallToolResult:
 async def _search_thoughts(args: dict[str, Any]) -> CallToolResult:
     config = get_config()
     query = args["query"]
-    vec = embed(query)
-    results = await search_thoughts(
-        embedding=vec,
-        top_k=args.get("top_k", config.search_top_k),
-        thought_type=args.get("thought_type"),
-        tags=args.get("tags"),
-        score_threshold=config.search_score_threshold,
-    )
+    top_k = args.get("top_k", config.search_top_k)
+    mode = args.get("mode", "hybrid")
+
+    include_history = args.get("include_history", False)
+
+    if mode == "keyword":
+        results = await keyword_search_thoughts(
+            query_text=query, top_k=top_k, include_history=include_history,
+        )
+    elif mode == "vector":
+        vec = embed(query)
+        results = await search_thoughts(
+            embedding=vec,
+            top_k=top_k,
+            thought_type=args.get("thought_type"),
+            tags=args.get("tags"),
+            score_threshold=config.search_score_threshold,
+        )
+    else:
+        vec = embed(query)
+        results = await hybrid_search_thoughts(
+            query_text=query,
+            embedding=vec,
+            top_k=top_k,
+            include_history=include_history,
+        )
     if not results:
         return CallToolResult(
             content=[TextContent(type="text", text="No matching thoughts found.")]
@@ -311,6 +406,86 @@ async def _bulk_import(args: dict[str, Any]) -> CallToolResult:
                 + (" ..." if len(ids) > 5 else ""),
             )
         ]
+    )
+
+
+async def _extract_thoughts(args: dict[str, Any]) -> CallToolResult:
+    from .extract import extract_thoughts
+
+    text = args["text"]
+    auto_capture = args.get("auto_capture", False)
+    source = args.get("source", "claude")
+
+    candidates = await extract_thoughts(text)
+    if not candidates:
+        return CallToolResult(
+            content=[TextContent(type="text", text="No thoughts could be extracted from the input.")]
+        )
+
+    if not auto_capture:
+        lines = [f"Extracted {len(candidates)} thought candidate(s):\n"]
+        for i, c in enumerate(candidates, 1):
+            lines.append(
+                f"{i}. [{c['thought_type']}] {c['content']}\n"
+                f"   tags: {', '.join(c.get('tags', []))}"
+            )
+            if c.get("subjects"):
+                lines.append(f"   subjects: {', '.join(c['subjects'])}")
+            if c.get("supersedes_query"):
+                lines.append(f"   supersedes: \"{c['supersedes_query']}\"")
+            lines.append("")
+        lines.append("Use capture_thought to save individual candidates, or call again with auto_capture=true.")
+        return CallToolResult(
+            content=[TextContent(type="text", text="\n".join(lines))]
+        )
+
+    # Auto-capture all candidates
+    ids = []
+    for c in candidates:
+        vec = embed(c["content"])
+        thought_id = await insert_thought(
+            content=c["content"],
+            embedding=vec,
+            thought_type=c.get("thought_type", "note"),
+            tags=c.get("tags", []),
+            source=source,
+        )
+        ids.append(thought_id)
+        if c.get("subjects"):
+            await link_subjects(
+                thought_id,
+                [{"name": s, "type": None} for s in c["subjects"]],
+            )
+
+    lines = [f"Extracted and captured {len(ids)} thought(s):"]
+    for c, tid in zip(candidates, ids):
+        lines.append(f"- [{c['thought_type']}] {c['content'][:80]}... ({tid[:8]})")
+    return CallToolResult(
+        content=[TextContent(type="text", text="\n".join(lines))]
+    )
+
+
+async def _thought_timeline(args: dict[str, Any]) -> CallToolResult:
+    subject = args["subject"]
+    top_k = args.get("top_k", 20)
+    timeline = await get_thought_timeline(subject, top_k=top_k)
+    if not timeline:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"No thoughts found for subject: {subject}")]
+        )
+    lines = [f"Timeline for \"{subject}\" ({len(timeline)} entries)\n"]
+    for i, t in enumerate(timeline, 1):
+        status = "CURRENT" if t["is_current"] else "SUPERSEDED"
+        date = t["created_at"][:10]
+        lines.append(
+            f"{i}. [{status}] [{t['thought_type']}] {date}\n"
+            f"   {t['content']}"
+        )
+        if t.get("superseded_by"):
+            lines.append(f"   → superseded by {t['superseded_by'][:8]}")
+        lines.append("")
+    return CallToolResult(
+        content=[TextContent(type="text", text="\n".join(lines))]
     )
 
 

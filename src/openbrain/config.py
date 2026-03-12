@@ -44,6 +44,14 @@ class Config(BaseSettings):
     web_host: str = Field(default="127.0.0.1")
     web_port: int = Field(default=10203)
 
+    # LLM extraction (Phase 3)
+    extract_provider: str = Field(default="ollama")   # "ollama", "claude", or "none"
+    extract_model: str = Field(default="gemma3")       # primary model (complex/long text)
+    extract_model_fast: str = Field(default="")        # fast model (short/simple text), empty = always use primary
+    extract_fast_threshold: int = Field(default=500)   # char length above which primary model is used
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    anthropic_api_key: str = Field(default="")         # only needed for claude provider
+
     @property
     def db_url(self) -> str:
         return (

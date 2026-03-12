@@ -21,6 +21,8 @@ class Intent(Enum):
     REVIEW = "review"
     STATS = "stats"
     HELP = "help"
+    SUPERSEDE = "supersede"
+    EXTRACT = "extract"
 
 
 @dataclass
@@ -29,6 +31,7 @@ class ParsedIntent:
     text: str                        # cleaned content/query
     thought_type: str = "note"
     tags: list[str] | None = None
+    supersede_query: str | None = None  # search query to find thought being superseded
 
 
 _SEARCH_PATTERNS = re.compile(
@@ -78,6 +81,15 @@ _STATS_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_SUPERSEDE_PATTERNS = re.compile(
+    r"^(actually[,:]?\s*|update:\s*|correction:\s*|changed?:\s*|no longer[,:]?\s*|now instead[,:]?\s*)",
+    re.IGNORECASE,
+)
+
+_EXTRACT_PREFIX = re.compile(r"^extract:\s*", re.IGNORECASE)
+
+DEEP_CAPTURE_THRESHOLD = 200
+
 _HELP_PATTERNS = re.compile(
     r"(^help$|^commands$|^what can you do|^\?+$|^how (do|does) (this|it) work)",
     re.IGNORECASE,
@@ -109,6 +121,23 @@ def parse(message: str) -> ParsedIntent:
     if _REVIEW_PATTERNS.search(msg):
         return ParsedIntent(intent=Intent.REVIEW, text=msg)
 
+    # Extract prefix: explicit deep capture
+    extract_match = _EXTRACT_PREFIX.match(msg)
+    if extract_match:
+        content = msg[extract_match.end():].strip()
+        return ParsedIntent(intent=Intent.EXTRACT, text=content)
+
+    # Supersede: "actually,...", "update:...", "correction:..."
+    supersede_match = _SUPERSEDE_PATTERNS.match(msg)
+    if supersede_match:
+        content = msg[supersede_match.end():].strip()
+        return ParsedIntent(
+            intent=Intent.SUPERSEDE,
+            text=content,
+            thought_type=_infer_type(content),
+            supersede_query=content,
+        )
+
     search_match = _SEARCH_PATTERNS.match(msg)
     if search_match:
         query = msg[search_match.end():].strip()
@@ -128,6 +157,10 @@ def parse(message: str) -> ParsedIntent:
     if msg.endswith("?") or msg.lower().startswith(("what", "who", "when", "where", "how", "why")):
         return ParsedIntent(intent=Intent.SEARCH, text=msg.rstrip("?"))
 
+    # Long text without explicit prefix → deep capture
+    if len(msg) > DEEP_CAPTURE_THRESHOLD:
+        return ParsedIntent(intent=Intent.EXTRACT, text=msg)
+
     return ParsedIntent(
         intent=Intent.CAPTURE,
         text=msg,
@@ -143,6 +176,15 @@ HELP_TEXT = """
 > realised that deploys on Fridays are always risky
 > met Sarah Chen, she runs engineering at Acme
 > remember: the API rate limit is 1000 req/min
+
+**Update a fact (supersede):**
+> actually, we switched from Redis to Valkey
+> update: Sarah moved to booth 7
+> correction: the rate limit is 2000, not 1000
+
+**Deep capture (extract multiple thoughts):**
+> extract: [paste meeting notes or long text]
+> (or just paste 200+ characters — auto-detected)
 
 **Search:**
 > search: Redis decisions
