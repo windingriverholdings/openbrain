@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenBrain sandbox file bridge daemon
+After=network.target postgresql.service
+PartOf=openbrain-web.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/repos/my-openbrain
+ExecStart=%h/repos/my-openbrain/.pixi/envs/default/bin/python \
+    %h/repos/my-openbrain/scripts/openbrain-watchd.py
+EnvironmentFile=%h/repos/my-openbrain/.env
+Restart=on-failure
+RestartSec=5
+
+# Allow fastembed model cache
+ReadWritePaths=%h/.cache/huggingface %h/.cache/fastembed %h/.openclaw
+
+[Install]
+WantedBy=default.target

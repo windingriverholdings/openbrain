@@ -68,3 +68,69 @@
 - [ ] Chunking strategy for long-form thoughts (> 512 tokens)
 - [ ] Scheduled weekly review automation (cron vs. event-driven)
 - [ ] Export format for portability (JSON-L, Markdown, Obsidian vault)
+
+---
+
+### 008 — Work Branch Interfaces: Telegram + Web UI (no OpenClaw)
+**Date:** 2026-03-05
+**Decision:** Work branch uses a direct Telegram bot and a local web chat UI. No OpenClaw dependency.
+**Rationale:** OpenClaw is not yet trusted/comfortable for the work context. Telegram is more secure than Slack (bot token stays local, no third-party workspace). Web UI provides a desktop capture interface without requiring CLI knowledge.
+
+---
+
+### 009 — Web UI: FastAPI + WebSockets, local-only on port 10203
+**Date:** 2026-03-05
+**Decision:** FastAPI with WebSocket transport, bound to 127.0.0.1:10203, accessible via `mybrain.local` hostname.
+**Rationale:** WebSockets give real-time feel (typing indicator, instant response). Local-only eliminates auth complexity for now. `mybrain.local` via /etc/hosts is friendlier than remembering a port. FastAPI is async-native, matching the rest of the stack.
+**Alternatives considered:** SSE (simpler but one-directional), plain HTTP polling (laggy).
+
+---
+
+### 010 — Intent Parsing: Regex-based, no LLM required
+**Date:** 2026-03-05
+**Decision:** Natural language input is parsed by a lightweight regex classifier (intent.py), not an LLM.
+**Rationale:** Keeps the web UI and Telegram bot self-contained with zero additional model overhead. Common patterns (search/capture/review) are reliably detected. Fallback is to capture anything statement-like and search anything question-like.
+**TODO:** Replace with a local LLM classifier (Ollama + llama3) for richer NL understanding when needed.
+
+---
+
+### 011 — PostgreSQL: Bare metal on host (not Docker)
+**Date:** 2026-03-05
+**Decision:** PostgreSQL runs as a native system service (already installed). Web UI can optionally run in Docker with host network bindings to reach it.
+**Rationale:** PostgreSQL is already installed and running on the host. Keeping it native avoids Docker networking complexity for the database. The web server is stateless and safe to containerise.
+
+---
+
+### 014 — Systemd: User Services Over System Services
+**Date:** 2026-03-05
+**Decision:** All three daemons (openbrain-web, openbrain-telegram, openbrain-watchd) run as `systemd --user` services installed to `~/.config/systemd/user/`, not as system-level services in `/etc/systemd/system/`.
+**Rationale:**
+- **Least privilege:** Services run as the owning user, never as root. They cannot write to system directories or read other users' files.
+- **No sudo for daily operations:** `systemctl --user start/stop/restart/status` requires no elevated privileges.
+- **Credential isolation:** `.env` (containing DB password and bot token) is only readable by the user — a system service running as a different account couldn't access it.
+- **Simpler unit files:** No `User=%i` directive or template `@.service` pattern needed. `%h` resolves to the user's home directory automatically.
+- **Consistent with watchd:** The file bridge daemon was already a user service; this makes all three consistent.
+**Trade-off:** Services need `loginctl enable-linger <user>` to start at boot without an active login session. `install-services.sh` handles this automatically (requires sudo once).
+**The only steps requiring sudo:** Adding `mybrain.local` to `/etc/hosts` and running `loginctl enable-linger` — both one-time setup operations.
+
+---
+
+### 013 — OpenClaw Integration: File Bridge Over Binary/Network Bridge
+**Date:** 2026-03-05
+**Decision:** OpenBrain is exposed to the OpenClaw agent via a file-based RPC bridge rather than a binary CLI or HTTP call.
+**Rationale:** OpenClaw runs the agent inside an isolated sandbox container (`~/.openclaw/sandboxes/agent-main-*/`). The sandbox has no access to host binaries (no mcporter, curl, wget, python) and no guaranteed network path to localhost. The only reliable capability is file read/write to `/workspace` (which maps to the sandbox directory on the host). The file bridge exploits this: the agent writes a JSON request file, a host-side daemon (`openbrain-watchd`) picks it up, calls OpenBrain directly, and writes back a JSON response file. This requires zero binaries and zero network access from inside the sandbox.
+**Security properties gained:**
+- The agent cannot directly invoke host processes or binaries
+- The agent cannot make arbitrary network calls
+- OpenBrain credentials (DB password) never enter the sandbox — only the watchd daemon holds them
+- The attack surface from a compromised agent prompt is limited to what can be expressed in a JSON request file
+**Alternatives considered:** mcporter CLI (not available in sandbox PATH), curl/wget HTTP calls (neither available), Python urllib (no Python in sandbox), spawn sub-agent (adds orchestration complexity and latency).
+
+---
+
+### 012 — Tailscale: Deferred, TODOs placed throughout codebase
+**Date:** 2026-03-05
+**Decision:** Local-only for now. All Tailscale expansion points are marked with `# TODO(tailscale):` comments.
+**Rationale:** Fastest path to a working system. Tailscale + Caddy integration is one config change away when ready.
+**TODO locations:** web/app.py, telegram_bot.py, install-services.sh, deploy/caddy-tailscale.conf
+

@@ -1,0 +1,86 @@
+#!/bin/sh
+# openbrain - file bridge client for OpenBrain
+# Writes /workspace/openbrain-request.json, waits for /workspace/openbrain-response.json
+# No wget, curl, python, or network access required — only file read/write.
+
+WORKSPACE=/workspace
+REQ="/tmp/openbrain-request.json"
+RESP="$WORKSPACE/openbrain-response.json"
+RESP_PUSH="$WORKSPACE/openbrain-push.json"
+RESP_HEARTBEAT="$WORKSPACE/openbrain-heartbeat.json"
+TIMEOUT=10  # seconds to wait for host daemon
+
+CMD="$1"
+shift 2>/dev/null || true
+
+# Clean up any stale files from prior run
+rm -f "$REQ" "$RESP"
+
+case "$CMD" in
+    search)
+        QUERY="$1"; TOP_K="${2:-5}"
+        printf '{"cmd":"search","query":"%s","top_k":%s}' \
+            "$(echo "$QUERY" | sed 's/"/\\"/g')" "$TOP_K" > "$REQ"
+        ;;
+    capture)
+        CONTENT="$1"; TYPE="${2:-note}"; SOURCE="${3:-openclaw}"
+        printf '{"cmd":"capture","content":"%s","thought_type":"%s","source":"%s"}' \
+            "$(echo "$CONTENT" | sed 's/"/\\"/g')" "$TYPE" "$SOURCE" > "$REQ"
+        ;;
+    stats)
+        printf '{"cmd":"stats"}' > "$REQ"
+        ;;
+    review)
+        DAYS="${1:-7}"
+        printf '{"cmd":"review","days":%s}' "$DAYS" > "$REQ"
+        ;;
+    poll)
+        # Read a host-initiated push (openbrain-push.json) if present.
+        if [ -f "$RESP_PUSH" ]; then
+            cat "$RESP_PUSH"
+            echo
+            rm -f "$RESP_PUSH"
+            exit 0
+        fi
+        printf '{"ok":false,"error":"no pending push"}\n'
+        exit 0
+        ;;
+    heartbeat)
+        # Read the latest heartbeat stats written by watchd (no request needed).
+        if [ -f "$RESP_HEARTBEAT" ]; then
+            cat "$RESP_HEARTBEAT"
+            echo
+            exit 0
+        fi
+        printf '{"ok":false,"error":"no heartbeat yet — is openbrain-watchd running?"}\n'
+        exit 0
+        ;;
+    *)
+        echo "Usage: openbrain <search|capture|stats|review|poll|heartbeat> [args]"
+        echo ""
+        echo "  openbrain search \"query\" [top_k]     -- semantic search"
+        echo "  openbrain capture \"content\" [type] [source] -- save a thought"
+        echo "  openbrain stats                       -- total thought count"
+        echo "  openbrain review [days]               -- recent thoughts by type"
+        echo "  openbrain poll                        -- read host-pushed message (if any)"
+        echo "  openbrain heartbeat                   -- read latest brain stats heartbeat"
+        exit 1
+        ;;
+esac
+
+# Wait for host daemon to process and write response
+i=0
+while [ $i -lt $((TIMEOUT * 10)) ]; do
+    if [ -f "$RESP" ]; then
+        cat "$RESP"
+        echo
+        rm -f "$RESP"
+        exit 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+done
+
+echo '{"ok":false,"error":"timeout: openbrain-watchd not responding — is it running on the host?"}' >&2
+rm -f "$REQ"
+exit 1

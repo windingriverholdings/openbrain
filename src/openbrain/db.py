@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import asyncpg
@@ -30,16 +29,6 @@ async def get_pool() -> asyncpg.Pool:
             max_size=5,
             command_timeout=30,
         )
-        # Register pgvector codec so asyncpg handles vector columns transparently
-        async with _pool.acquire() as conn:
-            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            await conn.set_type_codec(
-                "vector",
-                encoder=_encode_vector,
-                decoder=_decode_vector,
-                schema="public",
-                format="text",
-            )
     return _pool
 
 
@@ -50,12 +39,9 @@ async def close_pool() -> None:
         _pool = None
 
 
-def _encode_vector(value: list[float]) -> str:
-    return "[" + ",".join(str(x) for x in value) + "]"
-
-
-def _decode_vector(value: str) -> list[float]:
-    return [float(x) for x in value.strip("[]").split(",")]
+def _vec(embedding: list[float]) -> str:
+    """Encode a float list as a pgvector literal: [0.1,0.2,...]"""
+    return "[" + ",".join(str(x) for x in embedding) + "]"
 
 
 # ── Thoughts ─────────────────────────────────────────────────────────────────
@@ -77,11 +63,11 @@ async def insert_thought(
     row = await pool.fetchrow(
         """
         INSERT INTO thoughts (content, embedding, thought_type, tags, source, summary, metadata)
-        VALUES ($1, $2, $3::thought_type, $4, $5, $6, $7)
+        VALUES ($1, $2::vector, $3::thought_type, $4, $5, $6, $7)
         RETURNING id
         """,
         content,
-        _encode_vector(embedding),
+        _vec(embedding),
         thought_type,
         tags or [],
         source,
@@ -105,7 +91,7 @@ async def search_thoughts(
     pool = await get_pool()
 
     filters = []
-    args: list[Any] = [_encode_vector(embedding), top_k]
+    args: list[Any] = [_vec(embedding), top_k]
     arg_idx = 3
 
     if thought_type:
@@ -131,10 +117,10 @@ async def search_thoughts(
             source,
             metadata,
             created_at,
-            1 - (embedding <=> $1) AS score
+            1 - (embedding <=> $1::vector) AS score
         FROM thoughts
         {where_clause}
-        ORDER BY embedding <=> $1
+        ORDER BY embedding <=> $1::vector
         LIMIT $2
         """,
         *args,
@@ -154,6 +140,86 @@ async def search_thoughts(
         }
         for r in rows
         if float(r["score"]) >= score_threshold
+    ]
+
+
+async def hybrid_search_thoughts(
+    *,
+    query_text: str,
+    embedding: list[float],
+    top_k: int = 10,
+    keyword_weight: float = 0.3,
+    semantic_weight: float = 0.7,
+    score_threshold: float = 0.01,
+    include_history: bool = False,
+) -> list[dict[str, Any]]:
+    """Hybrid search combining keyword (BM25) and semantic (cosine) scoring."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT * FROM hybrid_search($1, $2::vector, $3, $4, $5, $6, $7)
+        """,
+        query_text,
+        _vec(embedding),
+        top_k,
+        keyword_weight,
+        semantic_weight,
+        score_threshold,
+        not include_history,
+    )
+    return [
+        {
+            "id": str(r["id"]),
+            "content": r["content"],
+            "summary": r["summary"],
+            "thought_type": r["thought_type"],
+            "tags": list(r["tags"]),
+            "source": r["source"],
+            "metadata": r["metadata"],
+            "created_at": r["created_at"].isoformat(),
+            "keyword_score": round(float(r["keyword_score"]), 4),
+            "semantic_score": round(float(r["semantic_score"]), 4),
+            "score": round(float(r["combined_score"]), 4),
+        }
+        for r in rows
+    ]
+
+
+async def keyword_search_thoughts(
+    *,
+    query_text: str,
+    top_k: int = 10,
+    include_history: bool = False,
+) -> list[dict[str, Any]]:
+    """Full-text keyword search using tsvector ranking."""
+    pool = await get_pool()
+    current_filter = "" if include_history else " AND is_current = TRUE"
+    rows = await pool.fetch(
+        f"""
+        SELECT
+            id, content, summary, thought_type, tags, source, metadata, created_at,
+            ts_rank_cd(fts_vector, plainto_tsquery('english', $1)) AS score
+        FROM thoughts
+        WHERE fts_vector @@ plainto_tsquery('english', $1){current_filter}
+        ORDER BY score DESC
+        LIMIT $2
+        """,
+        query_text,
+        top_k,
+    )
+    return [
+        {
+            "id": str(r["id"]),
+            "content": r["content"],
+            "summary": r["summary"],
+            "thought_type": r["thought_type"],
+            "tags": list(r["tags"]),
+            "source": r["source"],
+            "metadata": r["metadata"],
+            "created_at": r["created_at"].isoformat(),
+            "score": round(float(r["score"]), 4),
+        }
+        for r in rows
     ]
 
 
@@ -209,3 +275,74 @@ async def get_stats() -> dict[str, Any]:
         "newest": row["newest"].isoformat() if row["newest"] else None,
         "by_type": {r["thought_type"]: r["n"] for r in type_rows},
     }
+
+
+# ── Temporal / Supersede ────────────────────────────────────────────────────
+
+async def supersede_thought(old_id: str, new_id: str) -> None:
+    """Mark an existing thought as superseded by a new one."""
+    pool = await get_pool()
+    await pool.execute(
+        "SELECT supersede_thought($1::uuid, $2::uuid)",
+        old_id,
+        new_id,
+    )
+    logger.info("thought_superseded", old_id=old_id, new_id=new_id)
+
+
+async def get_thought_timeline(
+    subject_name: str,
+    top_k: int = 20,
+) -> list[dict[str, Any]]:
+    """Return all thoughts (current and superseded) linked to a subject, in chronological order."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT
+            t.id, t.content, t.summary, t.thought_type, t.tags, t.source,
+            t.metadata, t.created_at, t.is_current, t.valid_from, t.valid_until,
+            t.superseded_by
+        FROM thoughts t
+        JOIN thought_subjects ts ON ts.thought_id = t.id
+        WHERE lower(ts.subject_name) = lower($1)
+        ORDER BY t.created_at ASC
+        LIMIT $2
+        """,
+        subject_name,
+        top_k,
+    )
+    return [
+        {
+            "id": str(r["id"]),
+            "content": r["content"],
+            "summary": r["summary"],
+            "thought_type": r["thought_type"],
+            "tags": list(r["tags"]),
+            "source": r["source"],
+            "metadata": r["metadata"],
+            "created_at": r["created_at"].isoformat(),
+            "is_current": r["is_current"],
+            "valid_from": r["valid_from"].isoformat() if r["valid_from"] else None,
+            "valid_until": r["valid_until"].isoformat() if r["valid_until"] else None,
+            "superseded_by": str(r["superseded_by"]) if r["superseded_by"] else None,
+        }
+        for r in rows
+    ]
+
+
+async def link_subjects(thought_id: str, subjects: list[dict[str, str]]) -> None:
+    """Link a thought to one or more subjects (entity references)."""
+    if not subjects:
+        return
+    pool = await get_pool()
+    for subj in subjects:
+        await pool.execute(
+            """
+            INSERT INTO thought_subjects (thought_id, subject_name, subject_type)
+            VALUES ($1::uuid, $2, $3)
+            """,
+            thought_id,
+            subj["name"],
+            subj.get("type"),
+        )
+    logger.info("subjects_linked", thought_id=thought_id, count=len(subjects))

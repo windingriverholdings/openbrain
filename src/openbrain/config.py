@@ -31,6 +31,27 @@ class Config(BaseSettings):
     search_top_k: int = Field(default=10)
     search_score_threshold: float = Field(default=0.35)
 
+    # Telegram bot (work branch — direct, no OpenClaw)
+    telegram_bot_token: str = Field(default="")
+    telegram_allowed_user_id: int = Field(default=0)
+
+    # Slack bot (socket mode)
+    slack_bot_token: str = Field(default="")    # xoxb-...
+    slack_app_token: str = Field(default="")    # xapp-... (socket mode)
+    slack_allowed_user_id: str = Field(default="")  # e.g. U012AB3CD
+
+    # Web UI
+    web_host: str = Field(default="127.0.0.1")
+    web_port: int = Field(default=10203)
+
+    # LLM extraction (Phase 3)
+    extract_provider: str = Field(default="ollama")   # "ollama", "claude", or "none"
+    extract_model: str = Field(default="gemma3")       # primary model (complex/long text)
+    extract_model_fast: str = Field(default="")        # fast model (short/simple text), empty = always use primary
+    extract_fast_threshold: int = Field(default=500)   # char length above which primary model is used
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    anthropic_api_key: str = Field(default="")         # only needed for claude provider
+
     @property
     def db_url(self) -> str:
         return (
@@ -46,4 +67,18 @@ def get_config() -> Config:
     global _config
     if _config is None:
         _config = Config()
+    return _config
+
+
+def reload_config() -> Config:
+    """Re-read .env and rebuild the config singleton.
+
+    Also resets cached LLM providers so they pick up new model settings.
+    """
+    global _config
+    _config = Config()
+
+    from .llm import reset_providers
+    reset_providers()
+
     return _config
