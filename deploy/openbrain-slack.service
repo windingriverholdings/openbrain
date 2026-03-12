@@ -1,0 +1,28 @@
+[Unit]
+Description=OpenBrain Slack Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/repos/my-openbrain
+
+EnvironmentFile=%h/repos/my-openbrain/.env
+
+ExecStart=%h/repos/my-openbrain/.pixi/envs/default/bin/python \
+    -m openbrain.slack_bot
+
+Environment=PYTHONPATH=%h/repos/my-openbrain/src
+
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openbrain-slack
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/repos/my-openbrain %h/.cache/huggingface %h/.cache/fastembed
+
+[Install]
+WantedBy=default.target

@@ -13,7 +13,7 @@ Restart=on-failure
 RestartSec=5
 
 # Allow fastembed model cache
-ReadWritePaths=%h/.cache/huggingface %h/.cache/fastembed
+ReadWritePaths=%h/.cache/huggingface %h/.cache/fastembed %h/.openclaw
 
 [Install]
 WantedBy=default.target

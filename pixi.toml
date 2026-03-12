@@ -24,6 +24,9 @@ uvicorn = {version = ">=0.30.0", extras = ["standard"]}
 websockets = ">=12.0"
 # Telegram bot
 python-telegram-bot = ">=21.0"
+# Slack bot (socket mode — no public URL required)
+slack-bolt = ">=1.18.0"
+aiohttp = ">=3.9.0"
 
 [feature.dev.pypi-dependencies]
 pytest = ">=8.0.0"
@@ -38,6 +41,7 @@ dev     = { features = ["dev"], solve-group = "default" }
 server   = "python -m openbrain.server"
 web      = "python -m openbrain.web.app"
 telegram = "python -m openbrain.telegram_bot"
+slack    = "python -m openbrain.slack_bot"
 setup-db = "bash scripts/setup-db.sh"
 install-services = "sudo bash scripts/install-services.sh"
 

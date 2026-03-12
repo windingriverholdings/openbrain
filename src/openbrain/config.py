@@ -35,6 +35,11 @@ class Config(BaseSettings):
     telegram_bot_token: str = Field(default="")
     telegram_allowed_user_id: int = Field(default=0)
 
+    # Slack bot (socket mode)
+    slack_bot_token: str = Field(default="")    # xoxb-...
+    slack_app_token: str = Field(default="")    # xapp-... (socket mode)
+    slack_allowed_user_id: str = Field(default="")  # e.g. U012AB3CD
+
     # Web UI
     web_host: str = Field(default="127.0.0.1")
     web_port: int = Field(default=10203)

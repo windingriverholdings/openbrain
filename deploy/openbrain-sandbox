@@ -4,8 +4,10 @@
 # No wget, curl, python, or network access required — only file read/write.
 
 WORKSPACE=/workspace
-REQ="$WORKSPACE/openbrain-request.json"
+REQ="/tmp/openbrain-request.json"
 RESP="$WORKSPACE/openbrain-response.json"
+RESP_PUSH="$WORKSPACE/openbrain-push.json"
+RESP_HEARTBEAT="$WORKSPACE/openbrain-heartbeat.json"
 TIMEOUT=10  # seconds to wait for host daemon
 
 CMD="$1"
@@ -32,13 +34,36 @@ case "$CMD" in
         DAYS="${1:-7}"
         printf '{"cmd":"review","days":%s}' "$DAYS" > "$REQ"
         ;;
+    poll)
+        # Read a host-initiated push (openbrain-push.json) if present.
+        if [ -f "$RESP_PUSH" ]; then
+            cat "$RESP_PUSH"
+            echo
+            rm -f "$RESP_PUSH"
+            exit 0
+        fi
+        printf '{"ok":false,"error":"no pending push"}\n'
+        exit 0
+        ;;
+    heartbeat)
+        # Read the latest heartbeat stats written by watchd (no request needed).
+        if [ -f "$RESP_HEARTBEAT" ]; then
+            cat "$RESP_HEARTBEAT"
+            echo
+            exit 0
+        fi
+        printf '{"ok":false,"error":"no heartbeat yet — is openbrain-watchd running?"}\n'
+        exit 0
+        ;;
     *)
-        echo "Usage: openbrain <search|capture|stats|review> [args]"
+        echo "Usage: openbrain <search|capture|stats|review|poll|heartbeat> [args]"
         echo ""
-        echo "  openbrain search \"query\" [top_k]"
-        echo "  openbrain capture \"content\" [thought_type] [source]"
-        echo "  openbrain stats"
-        echo "  openbrain review [days]"
+        echo "  openbrain search \"query\" [top_k]     -- semantic search"
+        echo "  openbrain capture \"content\" [type] [source] -- save a thought"
+        echo "  openbrain stats                       -- total thought count"
+        echo "  openbrain review [days]               -- recent thoughts by type"
+        echo "  openbrain poll                        -- read host-pushed message (if any)"
+        echo "  openbrain heartbeat                   -- read latest brain stats heartbeat"
         exit 1
         ;;
 esac
