@@ -45,6 +45,9 @@ async def dispatch(parsed: ParsedIntent, source: str = "web") -> str:
     if parsed.intent == Intent.HELP:
         return HELP_TEXT
 
+    if parsed.intent == Intent.RELOAD:
+        return _reload()
+
     if parsed.intent == Intent.STATS:
         return await _stats()
 
@@ -64,6 +67,21 @@ async def dispatch(parsed: ParsedIntent, source: str = "web") -> str:
         return await _capture(parsed, source)
 
     return "I didn't understand that. Type `help` to see what I can do."
+
+
+def _reload() -> str:
+    """Reload config from .env and reset LLM providers."""
+    from .config import reload_config
+    config = reload_config()
+    fast_info = ""
+    if config.extract_model_fast:
+        fast_info = f"\nFast model: {config.extract_model_fast} (threshold: {config.extract_fast_threshold} chars)"
+    return (
+        f"Config reloaded.\n"
+        f"Provider: {config.extract_provider}\n"
+        f"Primary model: {config.extract_model}"
+        f"{fast_info}"
+    )
 
 
 async def _capture(parsed: ParsedIntent, source: str) -> str:

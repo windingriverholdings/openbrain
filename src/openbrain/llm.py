@@ -136,6 +136,15 @@ _fast: LLMProvider | None = None
 _has_fast: bool = False
 
 
+def reset_providers() -> None:
+    """Clear cached providers so next get_provider() rebuilds from config."""
+    global _primary, _fast, _has_fast
+    _primary = None
+    _fast = None
+    _has_fast = False
+    logger.info("llm_providers_reset")
+
+
 def get_provider(text: str = "") -> LLMProvider | None:
     """Return the appropriate LLM provider for the given text.
 

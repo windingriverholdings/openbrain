@@ -68,3 +68,17 @@ def get_config() -> Config:
     if _config is None:
         _config = Config()
     return _config
+
+
+def reload_config() -> Config:
+    """Re-read .env and rebuild the config singleton.
+
+    Also resets cached LLM providers so they pick up new model settings.
+    """
+    global _config
+    _config = Config()
+
+    from .llm import reset_providers
+    reset_providers()
+
+    return _config

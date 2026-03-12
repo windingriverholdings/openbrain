@@ -23,6 +23,7 @@ class Intent(Enum):
     HELP = "help"
     SUPERSEDE = "supersede"
     EXTRACT = "extract"
+    RELOAD = "reload"
 
 
 @dataclass
@@ -198,6 +199,9 @@ HELP_TEXT = """
 **Stats:**
 > stats
 > how many thoughts?
+
+**Admin:**
+> /reload — reload config from .env (no restart needed)
 
 Anything that looks like a statement gets captured automatically.
 Anything that looks like a question triggers a search.

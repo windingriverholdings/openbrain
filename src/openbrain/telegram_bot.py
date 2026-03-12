@@ -74,6 +74,16 @@ async def _cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(response)
 
 
+async def _cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    config = get_config()
+    if not _is_authorized(update, config.telegram_allowed_user_id):
+        return
+    from .intent import Intent, ParsedIntent
+    parsed = ParsedIntent(intent=Intent.RELOAD, text="reload")
+    response = await dispatch(parsed, source="telegram")
+    await update.message.reply_text(response)
+
+
 def run_bot() -> None:
     """Start the Telegram bot in polling mode."""
     config = get_config()
@@ -95,6 +105,7 @@ def run_bot() -> None:
     app.add_handler(CommandHandler("start", _cmd_help))
     app.add_handler(CommandHandler("stats", _cmd_stats))
     app.add_handler(CommandHandler("review", _cmd_review))
+    app.add_handler(CommandHandler("reload", _cmd_reload))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
 
     app.run_polling(drop_pending_updates=True)
