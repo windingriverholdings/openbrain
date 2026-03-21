@@ -11,3 +11,7 @@ dist/
 *.egg-info/
 logs/
 *.log
+
+# Go
+bin/
+coverage.out

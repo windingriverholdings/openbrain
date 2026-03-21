@@ -6,14 +6,18 @@ PartOf=openbrain-web.service
 [Service]
 Type=simple
 WorkingDirectory=%h/repos/my-openbrain
-ExecStart=%h/repos/my-openbrain/.pixi/envs/default/bin/python \
-    %h/repos/my-openbrain/scripts/openbrain-watchd.py
+
+ExecStart=%h/repos/my-openbrain/bin/openbrain-watchd
+
 EnvironmentFile=%h/repos/my-openbrain/.env
+
 Restart=on-failure
 RestartSec=5
 
-# Allow fastembed model cache
-ReadWritePaths=%h/.cache/huggingface %h/.cache/fastembed %h/.openclaw
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/repos/my-openbrain %h/.openclaw
 
 [Install]
 WantedBy=default.target

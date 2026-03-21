@@ -1,7 +1,7 @@
 [Unit]
 Description=OpenBrain Telegram Bot
 Documentation=https://github.com/windingriverholdings/my-openbrain
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 Type=simple
@@ -9,10 +9,7 @@ WorkingDirectory=%h/repos/my-openbrain
 
 EnvironmentFile=%h/repos/my-openbrain/.env
 
-ExecStart=%h/repos/my-openbrain/.pixi/envs/default/bin/python \
-    -m openbrain.telegram_bot
-
-Environment=PYTHONPATH=%h/repos/my-openbrain/src
+ExecStart=%h/repos/my-openbrain/bin/openbrain-telegram
 
 Restart=on-failure
 RestartSec=10
@@ -20,16 +17,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=openbrain-telegram
 
-# NOTE: ReadWritePaths requires the directories to exist before service start.
-#       Run scripts/install-services.sh which calls mkdir -p on all cache dirs.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/repos/my-openbrain %h/.cache/huggingface /home/%i/.cache/fastembed
-
-# TODO(tailscale): Switch from polling to webhook for lower latency.
-#                  Set OPENBRAIN_WEBHOOK_URL + OPENBRAIN_WEBHOOK_SECRET in .env
-#                  and update telegram_bot.py to use webhook mode.
+ReadWritePaths=%h/repos/my-openbrain
 
 [Install]
 WantedBy=default.target

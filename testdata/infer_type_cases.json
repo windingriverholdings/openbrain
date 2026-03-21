@@ -1,0 +1,157 @@
+[
+  {
+    "input": "decided to use Redis for caching",
+    "expected_type": "decision",
+    "actual_type": "decision"
+  },
+  {
+    "input": "chose Go over Rust",
+    "expected_type": "decision",
+    "actual_type": "decision"
+  },
+  {
+    "input": "going with PostgreSQL for the database",
+    "expected_type": "decision",
+    "actual_type": "decision"
+  },
+  {
+    "input": "will use Docker for deployment",
+    "expected_type": "decision",
+    "actual_type": "decision"
+  },
+  {
+    "input": "won't use MongoDB anymore",
+    "expected_type": "decision",
+    "actual_type": "decision"
+  },
+  {
+    "input": "rejected the microservices approach",
+    "expected_type": "decision",
+    "actual_type": "decision"
+  },
+  {
+    "input": "picked the blue theme",
+    "expected_type": "decision",
+    "actual_type": "decision"
+  },
+  {
+    "input": "realised Friday deploys are risky",
+    "expected_type": "insight",
+    "actual_type": "insight"
+  },
+  {
+    "input": "realized the tests were flaky",
+    "expected_type": "insight",
+    "actual_type": "note"
+  },
+  {
+    "input": "learned that pgvector needs HNSW",
+    "expected_type": "insight",
+    "actual_type": "insight"
+  },
+  {
+    "input": "noticed a pattern in the logs",
+    "expected_type": "insight",
+    "actual_type": "insight"
+  },
+  {
+    "input": "insight: parallel tests are faster",
+    "expected_type": "insight",
+    "actual_type": "insight"
+  },
+  {
+    "input": "key takeaway from the retro",
+    "expected_type": "insight",
+    "actual_type": "insight"
+  },
+  {
+    "input": "key learning: always test locally first",
+    "expected_type": "insight",
+    "actual_type": "insight"
+  },
+  {
+    "input": "met Sarah Chen at the conference",
+    "expected_type": "person",
+    "actual_type": "person"
+  },
+  {
+    "input": "talked to Bob about the migration",
+    "expected_type": "person",
+    "actual_type": "person"
+  },
+  {
+    "input": "talked with Alice about auth",
+    "expected_type": "person",
+    "actual_type": "person"
+  },
+  {
+    "input": "called the vendor about pricing",
+    "expected_type": "person",
+    "actual_type": "person"
+  },
+  {
+    "input": "spoke to the CTO about roadmap",
+    "expected_type": "person",
+    "actual_type": "person"
+  },
+  {
+    "input": "spoke with engineering about timelines",
+    "expected_type": "person",
+    "actual_type": "person"
+  },
+  {
+    "input": "emailed the team about the outage",
+    "expected_type": "person",
+    "actual_type": "person"
+  },
+  {
+    "input": "meeting with platform team",
+    "expected_type": "meeting",
+    "actual_type": "meeting"
+  },
+  {
+    "input": "standup was quick today",
+    "expected_type": "meeting",
+    "actual_type": "meeting"
+  },
+  {
+    "input": "sync with frontend team",
+    "expected_type": "meeting",
+    "actual_type": "meeting"
+  },
+  {
+    "input": "retrospective went well",
+    "expected_type": "meeting",
+    "actual_type": "meeting"
+  },
+  {
+    "input": "1:1 with my manager",
+    "expected_type": "meeting",
+    "actual_type": "meeting"
+  },
+  {
+    "input": "one on one with Sarah",
+    "expected_type": "meeting",
+    "actual_type": "meeting"
+  },
+  {
+    "input": "the server runs on port 8080",
+    "expected_type": "note",
+    "actual_type": "note"
+  },
+  {
+    "input": "pizza is great",
+    "expected_type": "note",
+    "actual_type": "note"
+  },
+  {
+    "input": "need to update the docs",
+    "expected_type": "note",
+    "actual_type": "note"
+  },
+  {
+    "input": "",
+    "expected_type": "note",
+    "actual_type": "note"
+  }
+]

@@ -1,0 +1,128 @@
+[
+  {
+    "input_text": "short simple text",
+    "input_text_len": 17,
+    "threshold": 500,
+    "expected_needs_primary": false,
+    "actual_needs_primary": false
+  },
+  {
+    "input_text": "decided to use Go",
+    "input_text_len": 17,
+    "threshold": 500,
+    "expected_needs_primary": false,
+    "actual_needs_primary": false
+  },
+  {
+    "input_text": "meeting notes from today",
+    "input_text_len": 24,
+    "threshold": 500,
+    "expected_needs_primary": false,
+    "actual_needs_primary": false
+  },
+  {
+    "input_text": "actually, we switched to Valkey",
+    "input_text_len": 31,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "correction: the rate limit is 2000",
+    "input_text_len": 34,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "update: Sarah moved to booth 7",
+    "input_text_len": 30,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "no longer using Docker",
+    "input_text_len": 22,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "now instead, we use Kubernetes",
+    "input_text_len": 30,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "changed: deploy schedule is weekly",
+    "input_text_len": 34,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "not 50% but 80% of the team agreed",
+    "input_text_len": 34,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "was wrong about the deadline",
+    "input_text_len": 28,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "I was mistaken about the config",
+    "input_text_len": 31,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "turns out the issue was DNS",
+    "input_text_len": 27,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "[501 chars of 'xxxxxxxxxxxxxxxxxxxx...']",
+    "input_text_len": 501,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "[1000 chars of 'xxxxxxxxxxxxxxxxxxxx...']",
+    "input_text_len": 1000,
+    "threshold": 500,
+    "expected_needs_primary": true,
+    "actual_needs_primary": true
+  },
+  {
+    "input_text": "[500 chars of 'xxxxxxxxxxxxxxxxxxxx...']",
+    "input_text_len": 500,
+    "threshold": 500,
+    "expected_needs_primary": false,
+    "actual_needs_primary": false
+  },
+  {
+    "input_text": "[499 chars of 'xxxxxxxxxxxxxxxxxxxx...']",
+    "input_text_len": 499,
+    "threshold": 500,
+    "expected_needs_primary": false,
+    "actual_needs_primary": false
+  },
+  {
+    "input_text": "",
+    "input_text_len": 0,
+    "threshold": 500,
+    "expected_needs_primary": false,
+    "actual_needs_primary": false
+  }
+]

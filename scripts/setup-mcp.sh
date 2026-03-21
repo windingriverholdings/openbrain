@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# OpenBrain: Register as an MCP server with Claude Code.
-# Run this on any machine after cloning the repo and running pixi install.
+# OpenBrain: Register Go MCP server with Claude Code.
+# Run this after 'make build' to point Claude Code at the Go binary.
 # Safe to re-run — removes and re-adds the entry cleanly.
 
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON="$REPO_DIR/.pixi/envs/default/bin/python"
+MCP_BIN="$REPO_DIR/bin/openbrain-mcp"
 ENV_FILE="$REPO_DIR/.env"
 
-if [[ ! -f "$PYTHON" ]]; then
-    echo "Error: pixi environment not found. Run 'pixi install' first."
+if [[ ! -f "$MCP_BIN" ]]; then
+    echo "Error: Go binary not found at $MCP_BIN"
+    echo "Run 'make build' first."
     exit 1
 fi
 
@@ -29,23 +30,29 @@ if [[ -z "$DB_PASSWORD" || "$DB_PASSWORD" == "change_me" ]]; then
     exit 1
 fi
 
-# ── Register via claude mcp add (handles permissions correctly) ──────────────
+# ── Read optional LLM config from .env ───────────────────────────────────────
+EXTRACT_PROVIDER=$(grep '^OPENBRAIN_EXTRACT_PROVIDER=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'"'" | xargs || echo "none")
+OLLAMA_BASE_URL=$(grep '^OPENBRAIN_OLLAMA_BASE_URL=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'"'" | xargs || echo "http://localhost:11434")
+
+# ── Register via claude mcp add ──────────────────────────────────────────────
 claude mcp remove openbrain 2>/dev/null || true
 
 claude mcp add openbrain \
   --scope user \
-  -e PYTHONPATH="$REPO_DIR/src" \
   -e OPENBRAIN_DB_HOST=localhost \
   -e OPENBRAIN_DB_PORT=5432 \
   -e OPENBRAIN_DB_NAME=openbrain \
   -e OPENBRAIN_DB_USER=openbrain \
   -e OPENBRAIN_DB_PASSWORD="$DB_PASSWORD" \
-  -- "$PYTHON" -m openbrain.server
+  -e OPENBRAIN_EXTRACT_PROVIDER="$EXTRACT_PROVIDER" \
+  -e OPENBRAIN_OLLAMA_BASE_URL="$OLLAMA_BASE_URL" \
+  -- "$MCP_BIN"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  OpenBrain registered with Claude Code."
+echo "  OpenBrain (Go) registered with Claude Code."
 echo ""
+echo "  Binary: $MCP_BIN"
 echo "  Verify: claude mcp list"
 echo "  Then start a new Claude Code session — the tools"
 echo "  will be available automatically."

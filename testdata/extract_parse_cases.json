@@ -1,0 +1,274 @@
+[
+  {
+    "name": "valid_json_array",
+    "raw_input": "[{\"content\":\"Decided to use Go\",\"thought_type\":\"decision\",\"tags\":[\"go\",\"rewrite\"]}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Decided to use Go",
+        "thought_type": "decision",
+        "tags": [
+          "go",
+          "rewrite"
+        ],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "markdown_fenced_json",
+    "raw_input": "```json\n[{\"content\":\"Test thought\",\"thought_type\":\"note\",\"tags\":[]}]\n```",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Test thought",
+        "thought_type": "note",
+        "tags": [],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "markdown_fenced_no_lang",
+    "raw_input": "```\n[{\"content\":\"Another thought\",\"thought_type\":\"insight\",\"tags\":[\"testing\"]}]\n```",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Another thought",
+        "thought_type": "insight",
+        "tags": [
+          "testing"
+        ],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "embedded_json_with_preamble",
+    "raw_input": "Here are the extracted thoughts:\n[{\"content\":\"Embedded thought\",\"thought_type\":\"idea\",\"tags\":[\"embedded\"]}]\nHope this helps!",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Embedded thought",
+        "thought_type": "idea",
+        "tags": [
+          "embedded"
+        ],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "single_object_not_array",
+    "raw_input": "{\"content\":\"Single thought\",\"thought_type\":\"decision\",\"tags\":[\"solo\"]}",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Single thought",
+        "thought_type": "decision",
+        "tags": [
+          "solo"
+        ],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "invalid_json",
+    "raw_input": "this is not json at all",
+    "expected_count": 0,
+    "expected_results": []
+  },
+  {
+    "name": "empty_array",
+    "raw_input": "[]",
+    "expected_count": 0,
+    "expected_results": []
+  },
+  {
+    "name": "empty_content_filtered",
+    "raw_input": "[{\"content\":\"\",\"thought_type\":\"note\",\"tags\":[]},{\"content\":\"Valid\",\"thought_type\":\"note\",\"tags\":[]}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Valid",
+        "thought_type": "note",
+        "tags": [],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "invalid_thought_type_defaults_to_note",
+    "raw_input": "[{\"content\":\"Has bad type\",\"thought_type\":\"banana\",\"tags\":[]}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Has bad type",
+        "thought_type": "note",
+        "tags": [],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "non_dict_items_filtered",
+    "raw_input": "[{\"content\":\"Good item\",\"thought_type\":\"note\",\"tags\":[]}, \"bad string item\", 42]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Good item",
+        "thought_type": "note",
+        "tags": [],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "tags_normalization",
+    "raw_input": "[{\"content\":\"Tag test\",\"thought_type\":\"note\",\"tags\":[\"  Go  \",\"RUST\",\"  python \"]}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Tag test",
+        "thought_type": "note",
+        "tags": [
+          "go",
+          "rust",
+          "python"
+        ],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "tags_not_a_list",
+    "raw_input": "[{\"content\":\"Bad tags\",\"thought_type\":\"note\",\"tags\":\"not-a-list\"}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Bad tags",
+        "thought_type": "note",
+        "tags": [],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "subjects_extraction",
+    "raw_input": "[{\"content\":\"About people\",\"thought_type\":\"person\",\"tags\":[],\"subjects\":[\"Alice\",\"Bob\"]}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "About people",
+        "thought_type": "person",
+        "tags": [],
+        "subjects": [
+          "Alice",
+          "Bob"
+        ],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "subjects_not_a_list",
+    "raw_input": "[{\"content\":\"Bad subjects\",\"thought_type\":\"note\",\"tags\":[],\"subjects\":\"not-a-list\"}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Bad subjects",
+        "thought_type": "note",
+        "tags": [],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "supersedes_query_string",
+    "raw_input": "[{\"content\":\"Updated fact\",\"thought_type\":\"decision\",\"tags\":[],\"supersedes_query\":\"old Redis decision\"}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Updated fact",
+        "thought_type": "decision",
+        "tags": [],
+        "subjects": [],
+        "supersedes_query": "old Redis decision"
+      }
+    ]
+  },
+  {
+    "name": "supersedes_query_not_string",
+    "raw_input": "[{\"content\":\"Bad supersede\",\"thought_type\":\"note\",\"tags\":[],\"supersedes_query\":42}]",
+    "expected_count": 1,
+    "expected_results": [
+      {
+        "content": "Bad supersede",
+        "thought_type": "note",
+        "tags": [],
+        "subjects": [],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "multiple_thoughts",
+    "raw_input": "[{\"content\": \"First thought\", \"thought_type\": \"decision\", \"tags\": [\"a\"]}, {\"content\": \"Second thought\", \"thought_type\": \"insight\", \"tags\": [\"b\"]}, {\"content\": \"Third thought\", \"thought_type\": \"person\", \"tags\": [\"c\"], \"subjects\": [\"Alice\"]}]",
+    "expected_count": 3,
+    "expected_results": [
+      {
+        "content": "First thought",
+        "thought_type": "decision",
+        "tags": [
+          "a"
+        ],
+        "subjects": [],
+        "supersedes_query": null
+      },
+      {
+        "content": "Second thought",
+        "thought_type": "insight",
+        "tags": [
+          "b"
+        ],
+        "subjects": [],
+        "supersedes_query": null
+      },
+      {
+        "content": "Third thought",
+        "thought_type": "person",
+        "tags": [
+          "c"
+        ],
+        "subjects": [
+          "Alice"
+        ],
+        "supersedes_query": null
+      }
+    ]
+  },
+  {
+    "name": "whitespace_content_filtered",
+    "raw_input": "[{\"content\":\"   \",\"thought_type\":\"note\",\"tags\":[]}]",
+    "expected_count": 0,
+    "expected_results": []
+  },
+  {
+    "name": "missing_content_key",
+    "raw_input": "[{\"thought_type\":\"note\",\"tags\":[]}]",
+    "expected_count": 0,
+    "expected_results": []
+  }
+]
