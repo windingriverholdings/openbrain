@@ -64,6 +64,53 @@ func TestTesseractLangsValidation_RejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestMarkitdownPathValidation_RejectsInvalid(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"path traversal", "../bin/markitdown"},
+		{"embedded dotdot", "/usr/../bin/markitdown"},
+		{"whitespace", "/usr/bin/markit down"},
+		{"tab", "/usr/bin/markit\tdown"},
+		{"semicolon", "markitdown; rm -rf /"},
+		{"pipe", "markitdown | cat"},
+		{"ampersand", "markitdown & echo"},
+		{"backtick", "`whoami`"},
+		{"dollar", "$(whoami)"},
+		{"relative with slash", "bin/markitdown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OPENBRAIN_MARKITDOWN_PATH", tt.value)
+			_, err := Load()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "OPENBRAIN_MARKITDOWN_PATH")
+		})
+	}
+}
+
+func TestMarkitdownPathValidation_AcceptsValid(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"plain basename", "markitdown"},
+		{"absolute path", "/usr/local/bin/markitdown"},
+		{"default value", "markitdown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OPENBRAIN_MARKITDOWN_PATH", tt.value)
+			cfg, err := Load()
+			assert.NoError(t, err)
+			assert.Equal(t, tt.value, cfg.MarkitdownPath)
+		})
+	}
+}
+
 func TestTesseractLangsValidation_AcceptsValid(t *testing.T) {
 	tests := []struct {
 		name  string
