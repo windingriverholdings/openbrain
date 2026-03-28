@@ -112,10 +112,9 @@ func TestIngestDocument_RejectsEmptyIngestDir(t *testing.T) {
 	assert.Contains(t, err.Error(), "not configured")
 }
 
-func TestDeepCaptureWithMeta_MergesMetadata(t *testing.T) {
-	// DeepCaptureWithMeta should merge file metadata into extracted thoughts.
-	// This is a structural test — verify the function signature exists and
-	// accepts the expected parameters.
+func TestDeepCaptureWithMeta_SignatureExists(t *testing.T) {
+	// Verify DeepCaptureWithMeta exists with the correct signature and
+	// handles the no-candidates case gracefully.
 	cfg := &config.Config{}
 	b := New(nil, nil, cfg)
 
@@ -128,10 +127,28 @@ func TestDeepCaptureWithMeta_MergesMetadata(t *testing.T) {
 	}
 	meta := map[string]any{"custom_key": "custom_value"}
 
-	// Without a real embedder/DB, this will fail at embed step.
-	// The important thing is the function exists with the right signature.
-	_, err := b.DeepCaptureWithMeta(context.Background(), parsed, "test", meta)
-	assert.Error(t, err) // Expected: embed will fail (nil embedder)
+	// Without LLM configured, ExtractThoughts returns nil, nil.
+	// DeepCaptureWithMeta should handle this gracefully.
+	result, err := b.DeepCaptureWithMeta(context.Background(), parsed, "test", meta)
+	assert.NoError(t, err)
+	assert.Contains(t, result, "0 thoughts captured")
+}
+
+func TestMergeMetadata_ImmutableMerge(t *testing.T) {
+	base := map[string]any{"filename": "test.pdf", "format": "pdf"}
+	overlay := map[string]any{"custom_key": "value", "source": "test"}
+
+	merged := mergeMetadata(base, overlay)
+
+	// Merged should contain all keys
+	assert.Equal(t, "test.pdf", merged["filename"])
+	assert.Equal(t, "pdf", merged["format"])
+	assert.Equal(t, "value", merged["custom_key"])
+	assert.Equal(t, "test", merged["source"])
+
+	// Original maps should be unchanged (immutability)
+	assert.Len(t, base, 2)
+	assert.Len(t, overlay, 2)
 }
 
 func TestValidateIngestPath_SecurityCases(t *testing.T) {

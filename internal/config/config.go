@@ -51,6 +51,10 @@ type Config struct {
 	WebHost string `env:"OPENBRAIN_WEB_HOST" envDefault:"127.0.0.1"`
 	WebPort int    `env:"OPENBRAIN_WEB_PORT" envDefault:"10203"`
 
+	// Document ingestion
+	IngestDir      string `env:"OPENBRAIN_INGEST_DIR"`
+	TesseractLangs string `env:"OPENBRAIN_TESSERACT_LANGS" envDefault:"eng"`
+
 	// LLM extraction
 	ExtractProvider      string `env:"OPENBRAIN_EXTRACT_PROVIDER" envDefault:"none"`
 	ExtractModel         string `env:"OPENBRAIN_EXTRACT_MODEL" envDefault:"gemma3"`

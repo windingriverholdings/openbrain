@@ -1,0 +1,191 @@
+package brain
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"path/filepath"
+	"strings"
+
+	"github.com/craig8/openbrain/internal/db"
+	"github.com/craig8/openbrain/internal/docparse"
+	"github.com/craig8/openbrain/internal/extract"
+	"github.com/craig8/openbrain/internal/model"
+)
+
+// IngestDocument detects format, parses the file, and optionally auto-captures
+// extracted thoughts. Returns a summary string — never raw file content.
+func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, autoCapture bool) (string, error) {
+	if b.cfg.IngestDir == "" {
+		return "", fmt.Errorf("ingestion not configured: OPENBRAIN_INGEST_DIR not set")
+	}
+
+	if err := validateIngestPath(filePath, b.cfg.IngestDir); err != nil {
+		return "", err
+	}
+
+	format, err := docparse.DetectFormat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("detect format: %w", err)
+	}
+
+	parser, err := docparse.NewParser(format, b.cfg)
+	if err != nil {
+		return "", fmt.Errorf("create parser: %w", err)
+	}
+
+	parsed, err := parser.Parse(ctx, filePath)
+	if err != nil {
+		return "", fmt.Errorf("parse document: %w", err)
+	}
+
+	if !autoCapture {
+		return fmt.Sprintf("Parsed %s document: %s (%d chars extracted)",
+			format, filepath.Base(filePath), len(parsed.Text)), nil
+	}
+
+	meta := map[string]any{"ingested_from": source}
+	result, err := b.DeepCaptureWithMeta(ctx, parsed, source, meta)
+	if err != nil {
+		return "", fmt.Errorf("deep capture: %w", err)
+	}
+
+	return fmt.Sprintf("Ingested %s: %s", filepath.Base(filePath), result), nil
+}
+
+// DeepCaptureWithMeta extracts multiple thoughts from a parsed document via LLM,
+// merging file metadata into each captured thought.
+func (b *Brain) DeepCaptureWithMeta(ctx context.Context, parsed docparse.ParseResult, source string, meta map[string]any) (string, error) {
+	candidates, err := extract.ExtractThoughts(ctx, parsed.Text)
+	if err != nil {
+		slog.Warn("extraction failed during ingest", "error", err)
+		return "", fmt.Errorf("extract thoughts: %w", err)
+	}
+
+	if len(candidates) == 0 {
+		return "0 thoughts captured (no extractable content)", nil
+	}
+
+	merged := mergeMetadata(parsed.Metadata, meta)
+
+	captured, errs := captureExtracted(ctx, b, candidates, source, merged)
+
+	return formatCaptureResult(captured, errs), nil
+}
+
+// captureExtracted is the shared core for DeepCapture and DeepCaptureWithMeta.
+// It embeds and stores each candidate, linking subjects as needed.
+func captureExtracted(ctx context.Context, b *Brain, candidates []extract.Candidate, source string, metadata map[string]any) ([]string, []string) {
+	var captured []string
+	var errs []string
+
+	for _, c := range candidates {
+		embedding, err := b.embedder.Embed(ctx, c.Content)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("embed %q: %v", truncate(c.Content, 30), err))
+			continue
+		}
+
+		id, err := db.InsertThought(ctx, b.pool, c.Content, embedding, c.ThoughtType, c.Tags, source, nil, metadata)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("insert: %v", err))
+			continue
+		}
+
+		var subjects []model.SubjectLink
+		for _, s := range c.Subjects {
+			subjects = append(subjects, model.SubjectLink{Name: s, Type: "concept"})
+		}
+		if len(subjects) > 0 {
+			if err := db.LinkSubjects(ctx, b.pool, id, subjects); err != nil {
+				slog.Warn("failed to link subjects", "error", err)
+			}
+		}
+
+		captured = append(captured, fmt.Sprintf("[%s] %s", c.ThoughtType, id[:8]))
+	}
+
+	return captured, errs
+}
+
+// formatCaptureResult builds a human-readable summary of captured thoughts.
+func formatCaptureResult(captured, errs []string) string {
+	result := fmt.Sprintf("%d thoughts captured: %s", len(captured), strings.Join(captured, ", "))
+	if len(errs) > 0 {
+		result += fmt.Sprintf("\n%d errors: %s", len(errs), strings.Join(errs, "; "))
+	}
+	return result
+}
+
+// mergeMetadata creates a new metadata map from base and overlay, without mutating either.
+func mergeMetadata(base, overlay map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(overlay))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range overlay {
+		merged[k] = v
+	}
+	return merged
+}
+
+// validateIngestPath validates that a file path is safe for ingestion:
+// - Must not be empty
+// - Must be absolute
+// - Must resolve (after cleaning and symlink eval) to within allowedDir
+func validateIngestPath(path, allowedDir string) error {
+	if path == "" {
+		return fmt.Errorf("file path is empty")
+	}
+
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("file path must be absolute, got relative path")
+	}
+
+	// Clean the path to resolve any .. components
+	cleaned := filepath.Clean(path)
+
+	// Reject paths that still contain .. after cleaning (defense in depth)
+	for _, part := range strings.Split(cleaned, string(filepath.Separator)) {
+		if part == ".." {
+			return fmt.Errorf("path outside allowed ingestion directory")
+		}
+	}
+
+	// Resolve the allowed directory (in case it contains symlinks)
+	allowedResolved, err := filepath.EvalSymlinks(filepath.Clean(allowedDir))
+	if err != nil {
+		return fmt.Errorf("cannot resolve allowed directory: %w", err)
+	}
+
+	// Quick prefix check before attempting symlink resolution
+	if !strings.HasPrefix(cleaned, allowedResolved+string(filepath.Separator)) && cleaned != allowedResolved {
+		return fmt.Errorf("path outside allowed ingestion directory")
+	}
+
+	// Resolve symlinks to get the real path (catches symlink escapes)
+	resolved, err := filepath.EvalSymlinks(cleaned)
+	if err != nil {
+		// If file doesn't exist, resolve the parent directory
+		resolved, err = filepath.EvalSymlinks(filepath.Dir(cleaned))
+		if err != nil {
+			return fmt.Errorf("cannot resolve path: %w", err)
+		}
+		resolved = filepath.Join(resolved, filepath.Base(cleaned))
+	}
+
+	// Final check: resolved path must still be within allowed directory
+	if !strings.HasPrefix(resolved, allowedResolved+string(filepath.Separator)) && resolved != allowedResolved {
+		return fmt.Errorf("path outside allowed ingestion directory")
+	}
+
+	return nil
+}
+
+// truncate returns the first n characters of s, or s if shorter.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}

@@ -33,6 +33,18 @@ var validSearchModes = map[string]bool{
 }
 
 func registerTools(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embedder) {
+	cfg := config.Get()
+
+	s.AddTool(
+		mcp.NewTool("ingest_document",
+			mcp.WithDescription("Ingest a document (PDF, DOCX, or image via OCR) into OpenBrain. Extracts text and optionally auto-captures as thoughts."),
+			mcp.WithString("file_path", mcp.Required(), mcp.Description("Absolute path to the document file")),
+			mcp.WithString("source", mcp.Description("Source identifier for captured thoughts")),
+			mcp.WithBoolean("auto_capture", mcp.Description("Auto-capture extracted text as thoughts (default: true)")),
+		),
+		mcpIngestDocument(b, cfg),
+	)
+
 	s.AddTool(
 		mcp.NewTool("capture_thought",
 			mcp.WithDescription("Capture a thought into OpenBrain."),
