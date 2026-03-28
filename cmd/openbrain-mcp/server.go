@@ -92,15 +92,6 @@ func registerTools(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embe
 		mcpExtract(b),
 	)
 
-	s.AddTool(
-		mcp.NewTool("ingest_document",
-			mcp.WithDescription("Ingest a document file (PDF, image via OCR, DOCX), extract text, and capture thoughts. Supported: .pdf, .png, .jpg, .jpeg, .tiff, .tif, .bmp, .docx"),
-			mcp.WithString("file_path", mcp.Required(), mcp.Description("Absolute path to the document file")),
-			mcp.WithBoolean("auto_capture", mcp.Description("Auto-capture extracted thoughts (default: true)")),
-			mcp.WithString("source", mcp.Description("Source identifier for captured thoughts")),
-		),
-		mcpIngestDocument(b),
-	)
 }
 
 // mcpCapture routes capture through brain.Capture.
@@ -256,33 +247,6 @@ func mcpExtract(b *brain.Brain) server.ToolHandlerFunc {
 
 		parsed := intent.ParsedIntent{Intent: intent.Extract, Text: text, ThoughtType: "note"}
 		result, err := b.DeepCapture(ctx, parsed, source)
-		if err != nil {
-			return toolError(err.Error()), nil
-		}
-		return toolText(result), nil
-	}
-}
-
-// mcpIngestDocument handles document ingestion through brain.IngestDocument.
-func mcpIngestDocument(b *brain.Brain) server.ToolHandlerFunc {
-	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := request.GetArguments()
-		filePath, _ := args["file_path"].(string)
-		if filePath == "" {
-			return toolError("file_path is required"), nil
-		}
-
-		if !strings.HasPrefix(filePath, "/") {
-			return toolError("file_path must be an absolute path"), nil
-		}
-
-		autoCapture := true
-		if ac, ok := args["auto_capture"].(bool); ok {
-			autoCapture = ac
-		}
-		source := stringArg(args, "source", "document")
-
-		result, err := b.IngestDocument(ctx, filePath, source, autoCapture)
 		if err != nil {
 			return toolError(err.Error()), nil
 		}

@@ -58,8 +58,6 @@ type Config struct {
 	OllamaBaseURL        string `env:"OPENBRAIN_OLLAMA_BASE_URL" envDefault:"http://localhost:11434"`
 	AnthropicAPIKey      string `env:"OPENBRAIN_ANTHROPIC_API_KEY"`
 
-	// Document ingestion
-	TesseractLangs string `env:"OPENBRAIN_TESSERACT_LANGS" envDefault:"eng"`
 }
 
 // DBUrl returns the PostgreSQL connection string.
