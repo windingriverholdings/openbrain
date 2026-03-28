@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/craig8/openbrain/internal/chunker"
 	"github.com/craig8/openbrain/internal/config"
 	"github.com/craig8/openbrain/internal/db"
 	"github.com/craig8/openbrain/internal/docparse"
@@ -46,18 +47,85 @@ func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, aut
 		return "", fmt.Errorf("parse document: %w", err)
 	}
 
+	chunkSize := effectiveChunkSize(b.cfg)
+	chunkOverlap := effectiveChunkOverlap(b.cfg)
+	fileName := filepath.Base(filePath)
+
+	// Short documents: no chunking needed.
+	if len([]rune(parsed.Text)) <= chunkSize {
+		if !autoCapture {
+			return fmt.Sprintf("Parsed %s document: %s (%d chars extracted)",
+				format, fileName, len(parsed.Text)), nil
+		}
+		meta := map[string]any{"ingested_from": source, "source_file": fileName}
+		result, err := b.DeepCaptureWithMeta(ctx, parsed, source, meta)
+		if err != nil {
+			return "", fmt.Errorf("deep capture: %w", err)
+		}
+		return fmt.Sprintf("Ingested %s: %s", fileName, result), nil
+	}
+
+	// Long documents: chunk and process each piece.
+	chunks := chunker.ChunkText(parsed.Text, chunkSize, chunkOverlap)
+
 	if !autoCapture {
-		return fmt.Sprintf("Parsed %s document: %s (%d chars extracted)",
-			format, filepath.Base(filePath), len(parsed.Text)), nil
+		return fmt.Sprintf("Parsed %s document: %s (%d chars extracted, %d chunks)",
+			format, fileName, len(parsed.Text), len(chunks)), nil
 	}
 
-	meta := map[string]any{"ingested_from": source}
-	result, err := b.DeepCaptureWithMeta(ctx, parsed, source, meta)
-	if err != nil {
-		return "", fmt.Errorf("deep capture: %w", err)
+	return b.ingestChunks(ctx, chunks, parsed.Metadata, fileName, source)
+}
+
+// ingestChunks processes each chunk through DeepCaptureWithMeta and returns
+// an aggregate summary.
+func (b *Brain) ingestChunks(ctx context.Context, chunks []chunker.Chunk, docMeta map[string]any, fileName, source string) (string, error) {
+	var totalCaptured int
+	var chunkSummaries []string
+
+	for _, c := range chunks {
+		chunkParsed := docparse.ParseResult{
+			Text:     c.Text,
+			Metadata: docMeta,
+		}
+
+		meta := map[string]any{
+			"ingested_from": source,
+			"source_file":   fileName,
+			"chunk_index":   c.Index,
+			"chunk_total":   c.Total,
+		}
+
+		result, err := b.DeepCaptureWithMeta(ctx, chunkParsed, source, meta)
+		if err != nil {
+			slog.Warn("chunk capture failed", "chunk", c.Index, "error", err)
+			chunkSummaries = append(chunkSummaries, fmt.Sprintf("chunk %d: error: %v", c.Index, err))
+			continue
+		}
+
+		chunkSummaries = append(chunkSummaries, fmt.Sprintf("chunk %d: %s", c.Index, result))
+		totalCaptured++
 	}
 
-	return fmt.Sprintf("Ingested %s: %s", filepath.Base(filePath), result), nil
+	return fmt.Sprintf("Ingested %s: %d chunks, %s",
+		fileName, len(chunks), strings.Join(chunkSummaries, "; ")), nil
+}
+
+// effectiveChunkSize returns the configured chunk size, falling back to
+// the chunker package default.
+func effectiveChunkSize(cfg *config.Config) int {
+	if cfg != nil && cfg.IngestChunkSize > 0 {
+		return cfg.IngestChunkSize
+	}
+	return chunker.DefaultWindowSize
+}
+
+// effectiveChunkOverlap returns the configured chunk overlap, falling back
+// to the chunker package default.
+func effectiveChunkOverlap(cfg *config.Config) int {
+	if cfg != nil && cfg.IngestChunkOverlap > 0 {
+		return cfg.IngestChunkOverlap
+	}
+	return chunker.DefaultOverlap
 }
 
 // DeepCaptureWithMeta extracts multiple thoughts from a parsed document via LLM,
