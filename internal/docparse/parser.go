@@ -1,5 +1,6 @@
-// Package docparse provides document text extraction for PDF, DOCX, plain-text,
-// and image files (via OCR). Each format implements the Parser interface.
+// Package docparse provides document text extraction for PDF, DOCX, PPTX, XLSX,
+// plain-text, and image files (via OCR). Each format implements the Parser
+// interface.
 package docparse
 
 import (
@@ -114,7 +115,11 @@ func NewParser(format Format, cfg *config.Config) (Parser, error) {
 		if cfg != nil && cfg.MarkitdownPath != "" {
 			binPath = cfg.MarkitdownPath
 		}
-		return &markitdownParser{binPath: binPath}, nil
+		maxBytes := config.DefaultIngestMaxBytes
+		if cfg != nil && cfg.IngestMaxBytes > 0 {
+			maxBytes = cfg.IngestMaxBytes
+		}
+		return &markitdownParser{binPath: binPath, maxBytes: maxBytes}, nil
 	default:
 		return nil, fmt.Errorf("no parser for format: %q", format)
 	}
