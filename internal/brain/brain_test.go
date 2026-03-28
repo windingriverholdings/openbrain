@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSearchOptsDefaults(t *testing.T) {
@@ -28,13 +27,13 @@ func TestSearchOptsWithAllFields(t *testing.T) {
 	assert.True(t, opts.IncludeHistory)
 }
 
-func TestSearchSignatureAcceptsSearchOpts(t *testing.T) {
-	// Verify the Search method signature accepts SearchOpts.
-	// This is a compile-time check — if SearchOpts doesn't exist or
-	// Search doesn't accept it, this file won't compile.
-	var b *Brain
-	_ = b // Just verifying the type exists and has the right method signature
-	require.NotNil(t, t) // placeholder assertion
+func TestEffectiveThresholdUsesCustomFilteredValue(t *testing.T) {
+	// When a custom filtered threshold is provided, it should be used
+	// instead of the default constant.
+	opts := SearchOpts{ThoughtType: "insight"}
+	customThreshold := 0.05
+	threshold := effectiveThreshold(0.15, customThreshold, opts)
+	assert.Equal(t, customThreshold, threshold)
 }
 
 func TestEffectiveThresholdLoweredForTypeFilter(t *testing.T) {
