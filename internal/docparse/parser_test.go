@@ -24,7 +24,7 @@ func TestDetectFormat(t *testing.T) {
 		{"bmp image", "image.bmp", FormatOCR, false},
 		{"docx file", "document.docx", FormatDOCX, false},
 		{"DOCX uppercase", "DOC.DOCX", FormatDOCX, false},
-		{"unsupported txt", "notes.txt", "", true},
+		{"txt file", "notes.txt", FormatText, false},
 		{"unsupported doc", "old.doc", "", true},
 		{"no extension", "readme", "", true},
 		{"path with dirs", "/home/user/docs/report.pdf", FormatPDF, false},
