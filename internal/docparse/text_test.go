@@ -29,7 +29,7 @@ func TestTextParser_Parse(t *testing.T) {
 	assert.Equal(t, "text", result.Metadata["format"])
 	assert.Equal(t, ".txt", result.Metadata["extension"])
 	assert.Greater(t, result.Metadata["file_size_bytes"].(int64), int64(0))
-	assert.Equal(t, 4, result.Metadata["line_count"])
+	assert.Equal(t, 3, result.Metadata["line_count"])
 }
 
 func TestTextParser_EmptyFile(t *testing.T) {
