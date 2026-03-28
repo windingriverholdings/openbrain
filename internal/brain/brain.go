@@ -176,17 +176,17 @@ func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, sou
 	}
 
 	var captured []string
-	var errors []string
+	var errs []string
 	for _, c := range candidates {
 		embedding, err := b.embedder.Embed(ctx, c.Content)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("embed %q: %v", c.Content[:min(30, len(c.Content))], err))
+			errs = append(errs, fmt.Sprintf("embed %q: %v", c.Content[:min(30, len(c.Content))], err))
 			continue
 		}
 
 		id, err := db.InsertThought(ctx, b.pool, c.Content, embedding, c.ThoughtType, c.Tags, source, nil, nil)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("insert: %v", err))
+			errs = append(errs, fmt.Sprintf("insert: %v", err))
 			continue
 		}
 
@@ -204,8 +204,8 @@ func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, sou
 	}
 
 	result := fmt.Sprintf("Extracted %d thoughts: %s", len(captured), strings.Join(captured, ", "))
-	if len(errors) > 0 {
-		result += fmt.Sprintf("\n%d errors: %s", len(errors), strings.Join(errors, "; "))
+	if len(errs) > 0 {
+		result += fmt.Sprintf("\n%d errors: %s", len(errs), strings.Join(errs, "; "))
 	}
 	return result, nil
 }
