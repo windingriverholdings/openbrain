@@ -4,11 +4,11 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-WorkingDirectory=%h/repos/my-openbrain
+WorkingDirectory=%h/repos/openbrain
 
-EnvironmentFile=%h/repos/my-openbrain/.env
+EnvironmentFile=%h/repos/openbrain/.env
 
-ExecStart=%h/repos/my-openbrain/bin/openbrain-slack
+ExecStart=%h/repos/openbrain/bin/openbrain-slack
 
 Restart=on-failure
 RestartSec=10
@@ -19,7 +19,7 @@ SyslogIdentifier=openbrain-slack
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/repos/my-openbrain
+ReadWritePaths=%h/repos/openbrain
 
 [Install]
 WantedBy=default.target

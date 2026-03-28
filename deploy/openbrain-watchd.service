@@ -5,11 +5,11 @@ PartOf=openbrain-web.service
 
 [Service]
 Type=simple
-WorkingDirectory=%h/repos/my-openbrain
+WorkingDirectory=%h/repos/openbrain
 
-ExecStart=%h/repos/my-openbrain/bin/openbrain-watchd
+ExecStart=%h/repos/openbrain/bin/openbrain-watchd
 
-EnvironmentFile=%h/repos/my-openbrain/.env
+EnvironmentFile=%h/repos/openbrain/.env
 
 Restart=on-failure
 RestartSec=5
@@ -17,7 +17,7 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/repos/my-openbrain %h/.openclaw
+ReadWritePaths=%h/repos/openbrain %h/.openclaw
 
 [Install]
 WantedBy=default.target

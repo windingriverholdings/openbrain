@@ -1,15 +1,15 @@
 [Unit]
 Description=OpenBrain Telegram Bot
-Documentation=https://github.com/windingriverholdings/my-openbrain
+Documentation=https://github.com/windingriverholdings/openbrain
 After=network.target postgresql.service
 
 [Service]
 Type=simple
-WorkingDirectory=%h/repos/my-openbrain
+WorkingDirectory=%h/repos/openbrain
 
-EnvironmentFile=%h/repos/my-openbrain/.env
+EnvironmentFile=%h/repos/openbrain/.env
 
-ExecStart=%h/repos/my-openbrain/bin/openbrain-telegram
+ExecStart=%h/repos/openbrain/bin/openbrain-telegram
 
 Restart=on-failure
 RestartSec=10
@@ -20,7 +20,7 @@ SyslogIdentifier=openbrain-telegram
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/repos/my-openbrain
+ReadWritePaths=%h/repos/openbrain
 
 [Install]
 WantedBy=default.target
