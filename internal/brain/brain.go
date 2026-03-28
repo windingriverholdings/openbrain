@@ -101,6 +101,10 @@ func effectiveThreshold(base float64, filteredThreshold float64, opts SearchOpts
 }
 
 // Search performs a search and returns structured results.
+//
+// NOTE: Tags filtering (opts.Tags) is currently only applied in vector mode.
+// Keyword and hybrid searches ignore tags — this is a known limitation that
+// should be addressed when those query paths gain tag support in the DB layer.
 func (b *Brain) Search(ctx context.Context, query string, opts SearchOpts) ([]model.ThoughtRow, error) {
 	embedding, err := b.embedder.Embed(ctx, query)
 	if err != nil {
