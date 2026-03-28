@@ -23,6 +23,15 @@ func serveMCP(_ context.Context, cfg *config.Config, b *brain.Brain, embedder em
 
 var thoughtTypeEnum = []string{"decision", "insight", "person", "meeting", "idea", "note", "memory"}
 
+var validThoughtTypes = map[string]bool{
+	"decision": true, "insight": true, "person": true,
+	"meeting": true, "idea": true, "note": true, "memory": true,
+}
+
+var validSearchModes = map[string]bool{
+	"hybrid": true, "vector": true, "keyword": true,
+}
+
 func registerTools(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embedder) {
 	s.AddTool(
 		mcp.NewTool("capture_thought",
@@ -126,9 +135,19 @@ func mcpSearch(b *brain.Brain) server.ToolHandlerFunc {
 		args := request.GetArguments()
 		query, _ := args["query"].(string)
 
+		mode := stringArg(args, "mode", "hybrid")
+		if !validSearchModes[mode] {
+			return toolError(fmt.Sprintf("invalid mode %q: must be one of hybrid, vector, keyword", mode)), nil
+		}
+
+		thoughtType := stringArg(args, "thought_type", "")
+		if thoughtType != "" && !validThoughtTypes[thoughtType] {
+			return toolError(fmt.Sprintf("invalid thought_type %q: must be one of decision, insight, person, meeting, idea, note, memory", thoughtType)), nil
+		}
+
 		opts := brain.SearchOpts{
-			Mode:           stringArg(args, "mode", "hybrid"),
-			ThoughtType:    stringArg(args, "thought_type", ""),
+			Mode:           mode,
+			ThoughtType:    thoughtType,
 			Tags:           stringListArg(args, "tags"),
 			IncludeHistory: boolArg(args, "include_history", false),
 		}
