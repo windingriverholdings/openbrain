@@ -1,18 +1,25 @@
-GO      ?= go
+GO      ?= /snap/go/current/bin/go
+GOTOOLCHAIN := local
+export GOTOOLCHAIN
 BINDIR  := bin
 CMDS    := openbrain openbrain-mcp openbrain-web openbrain-telegram openbrain-slack openbrain-watchd
 BINS    := $(addprefix $(BINDIR)/,$(CMDS))
+BUILD_TAGS ?=
 
-.PHONY: all build test test-cover test-verbose lint vet clean install fixtures setup-db
+.PHONY: all build build-ocr test test-cover test-verbose lint vet clean install fixtures setup-db
 
-## Build all binaries
-all: build
+## Default: show help
+all: help
 
 build: $(BINS)
 
 $(BINDIR)/%: cmd/%/*.go internal/**/*.go go.mod go.sum
 	@mkdir -p $(BINDIR)
-	$(GO) build -o $@ ./cmd/$*
+	$(GO) build $(if $(BUILD_TAGS),-tags $(BUILD_TAGS)) -o $@ ./cmd/$*
+
+## Build all binaries with OCR support (requires tesseract-ocr + libtesseract-dev)
+build-ocr:
+	$(MAKE) build BUILD_TAGS=ocr
 
 ## Run all unit tests
 test:
@@ -70,6 +77,7 @@ help:
 	@echo "OpenBrain Go — available targets:"
 	@echo ""
 	@echo "  make build         Build all 6 binaries"
+	@echo "  make build-ocr     Build with OCR support (needs tesseract)"
 	@echo "  make test          Run unit tests"
 	@echo "  make test-verbose  Run tests with verbose output"
 	@echo "  make test-cover    Run tests with coverage report"
