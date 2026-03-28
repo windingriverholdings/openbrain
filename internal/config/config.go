@@ -4,12 +4,17 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sync"
 	"sync/atomic"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
 )
+
+// tesseractLangsPattern validates TesseractLangs as one or more 3-letter
+// ISO 639-2 codes separated by plus signs (e.g. "eng", "eng+fra+deu").
+var tesseractLangsPattern = regexp.MustCompile(`^[a-z]{3}(\+[a-z]{3})*$`)
 
 // defaultSearchScoreThreshold is the baseline min-score for search results.
 // Lowered from 0.35 to 0.15 to avoid filtering out valid matches in small corpora.
@@ -51,6 +56,11 @@ type Config struct {
 	WebHost string `env:"OPENBRAIN_WEB_HOST" envDefault:"127.0.0.1"`
 	WebPort int    `env:"OPENBRAIN_WEB_PORT" envDefault:"10203"`
 
+	// Document ingestion
+	IngestDir      string `env:"OPENBRAIN_INGEST_DIR"`
+	IngestMaxBytes int64  `env:"OPENBRAIN_INGEST_MAX_BYTES" envDefault:"52428800"` // 50 MB
+	TesseractLangs string `env:"OPENBRAIN_TESSERACT_LANGS" envDefault:"eng"`
+
 	// LLM extraction
 	ExtractProvider      string `env:"OPENBRAIN_EXTRACT_PROVIDER" envDefault:"none"`
 	ExtractModel         string `env:"OPENBRAIN_EXTRACT_MODEL" envDefault:"gemma3"`
@@ -81,6 +91,9 @@ func Load() (*Config, error) {
 	c := &Config{}
 	if err := env.Parse(c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if c.TesseractLangs != "" && !tesseractLangsPattern.MatchString(c.TesseractLangs) {
+		return nil, fmt.Errorf("invalid OPENBRAIN_TESSERACT_LANGS %q: must match pattern lang(+lang)* where lang is 3 lowercase letters", c.TesseractLangs)
 	}
 	return c, nil
 }

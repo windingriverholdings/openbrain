@@ -52,7 +52,11 @@ func NewParser(format Format, cfg *config.Config) (Parser, error) {
 	case FormatPDF:
 		return &pdfParser{}, nil
 	case FormatOCR:
-		return &ocrParser{langs: "eng"}, nil
+		langs := "eng"
+		if cfg != nil && cfg.TesseractLangs != "" {
+			langs = cfg.TesseractLangs
+		}
+		return &ocrParser{langs: langs}, nil
 	case FormatDOCX:
 		return &docxParser{}, nil
 	default:

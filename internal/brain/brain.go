@@ -168,6 +168,7 @@ func (b *Brain) Supersede(ctx context.Context, parsed intent.ParsedIntent, sourc
 }
 
 // DeepCapture extracts multiple thoughts from long text via LLM.
+// Uses the shared captureExtracted helper (also used by DeepCaptureWithMeta).
 func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, source string) (string, error) {
 	candidates, err := extract.ExtractThoughts(ctx, parsed.Text)
 	if err != nil {
@@ -179,39 +180,8 @@ func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, sou
 		return b.Capture(ctx, parsed, source)
 	}
 
-	var captured []string
-	var errs []string
-	for _, c := range candidates {
-		embedding, err := b.embedder.Embed(ctx, c.Content)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("embed %q: %v", c.Content[:min(30, len(c.Content))], err))
-			continue
-		}
-
-		id, err := db.InsertThought(ctx, b.pool, c.Content, embedding, c.ThoughtType, c.Tags, source, nil, nil)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("insert: %v", err))
-			continue
-		}
-
-		var subjects []model.SubjectLink
-		for _, s := range c.Subjects {
-			subjects = append(subjects, model.SubjectLink{Name: s, Type: "concept"})
-		}
-		if len(subjects) > 0 {
-			if err := db.LinkSubjects(ctx, b.pool, id, subjects); err != nil {
-				slog.Warn("failed to link subjects", "error", err)
-			}
-		}
-
-		captured = append(captured, fmt.Sprintf("[%s] %s", c.ThoughtType, id[:8]))
-	}
-
-	result := fmt.Sprintf("Extracted %d thoughts: %s", len(captured), strings.Join(captured, ", "))
-	if len(errs) > 0 {
-		result += fmt.Sprintf("\n%d errors: %s", len(errs), strings.Join(errs, "; "))
-	}
-	return result, nil
+	captured, errs := captureExtracted(ctx, b, candidates, source, nil)
+	return fmt.Sprintf("Extracted %d thoughts: %s", len(captured), formatCaptureResult(captured, errs)), nil
 }
 
 // --- Formatting helpers (text output for CLI/chat) ---
