@@ -14,7 +14,7 @@ import (
 func TestTextParser_Parse(t *testing.T) {
 	fixturePath := filepath.Join("testdata", "sample.txt")
 
-	cfg := &config.Config{IngestMaxBytes: 50 * 1024 * 1024}
+	cfg := &config.Config{IngestMaxBytes: config.DefaultIngestMaxBytes}
 	p, err := NewParser(FormatText, cfg)
 	require.NoError(t, err)
 
@@ -38,7 +38,7 @@ func TestTextParser_EmptyFile(t *testing.T) {
 	err := os.WriteFile(emptyFile, []byte{}, 0644)
 	require.NoError(t, err)
 
-	cfg := &config.Config{IngestMaxBytes: 50 * 1024 * 1024}
+	cfg := &config.Config{IngestMaxBytes: config.DefaultIngestMaxBytes}
 	p, err := NewParser(FormatText, cfg)
 	require.NoError(t, err)
 
@@ -65,7 +65,7 @@ func TestTextParser_ExceedsMaxBytes(t *testing.T) {
 }
 
 func TestTextParser_FileNotFound(t *testing.T) {
-	cfg := &config.Config{IngestMaxBytes: 50 * 1024 * 1024}
+	cfg := &config.Config{IngestMaxBytes: config.DefaultIngestMaxBytes}
 	p, err := NewParser(FormatText, cfg)
 	require.NoError(t, err)
 
@@ -77,7 +77,7 @@ func TestDetectFormat_TextExtensions(t *testing.T) {
 	textExts := []string{
 		".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".toml", ".xml", ".html",
 		".go", ".py", ".js", ".ts", ".sh", ".sql", ".log", ".cfg", ".ini",
-		".env.example", ".conf", ".rst", ".tex",
+		".conf", ".rst", ".tex",
 	}
 
 	for _, ext := range textExts {
@@ -87,4 +87,37 @@ func TestDetectFormat_TextExtensions(t *testing.T) {
 			assert.Equal(t, FormatText, got, "extension %s should map to FormatText", ext)
 		})
 	}
+}
+
+func TestDetectFormat_KnownBasenames(t *testing.T) {
+	basenames := []string{
+		"Makefile", "Dockerfile", "LICENSE",
+		".gitignore", ".gitattributes", ".dockerignore", ".editorconfig",
+		".env.example", ".env.local", ".env.development", ".env.production", ".env.test",
+	}
+
+	for _, name := range basenames {
+		t.Run(name, func(t *testing.T) {
+			got, err := DetectFormat(name)
+			require.NoError(t, err, "basename %s should be recognized", name)
+			assert.Equal(t, FormatText, got, "basename %s should map to FormatText", name)
+		})
+	}
+}
+
+func TestTextParser_NoTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "no-newline.txt")
+	err := os.WriteFile(f, []byte("line one\nline two"), 0644)
+	require.NoError(t, err)
+
+	cfg := &config.Config{IngestMaxBytes: config.DefaultIngestMaxBytes}
+	p, err := NewParser(FormatText, cfg)
+	require.NoError(t, err)
+
+	result, err := p.Parse(context.Background(), f)
+	require.NoError(t, err)
+
+	assert.Equal(t, "line one\nline two", result.Text)
+	assert.Equal(t, 2, result.Metadata["line_count"])
 }

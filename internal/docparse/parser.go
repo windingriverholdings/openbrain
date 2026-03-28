@@ -1,5 +1,5 @@
-// Package docparse provides document text extraction for PDF, DOCX, and
-// image files (via OCR). Each format implements the Parser interface.
+// Package docparse provides document text extraction for PDF, DOCX, plain-text,
+// and image files (via OCR). Each format implements the Parser interface.
 package docparse
 
 import (
@@ -30,6 +30,23 @@ var textExtensions = map[string]bool{
 	".conf": true, ".rst": true, ".tex": true,
 }
 
+// knownTextBasenames maps extensionless filenames and dotfiles that are known
+// plain-text formats.
+var knownTextBasenames = map[string]bool{
+	"makefile":         true,
+	"dockerfile":       true,
+	"license":          true,
+	".gitignore":       true,
+	".gitattributes":   true,
+	".dockerignore":    true,
+	".editorconfig":    true,
+	".env.example":     true,
+	".env.local":       true,
+	".env.development": true,
+	".env.production":  true,
+	".env.test":        true,
+}
+
 // ParseResult holds extracted text and source document metadata.
 type ParseResult struct {
 	Text     string
@@ -42,12 +59,13 @@ type Parser interface {
 }
 
 // DetectFormat determines the document format from the file extension.
+// Extensionless files and dotfiles are matched against knownTextBasenames.
 func DetectFormat(filePath string) (Format, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
-
-	// Handle compound extensions like ".env.example"
 	base := strings.ToLower(filepath.Base(filePath))
-	if strings.HasSuffix(base, ".env.example") {
+
+	// Check known extensionless/dotfile basenames first.
+	if knownTextBasenames[base] {
 		return FormatText, nil
 	}
 
@@ -80,7 +98,7 @@ func NewParser(format Format, cfg *config.Config) (Parser, error) {
 	case FormatDOCX:
 		return &docxParser{}, nil
 	case FormatText:
-		maxBytes := int64(50 * 1024 * 1024) // 50 MB default
+		maxBytes := config.DefaultIngestMaxBytes
 		if cfg != nil && cfg.IngestMaxBytes > 0 {
 			maxBytes = cfg.IngestMaxBytes
 		}

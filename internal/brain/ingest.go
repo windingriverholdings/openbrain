@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/craig8/openbrain/internal/config"
 	"github.com/craig8/openbrain/internal/db"
 	"github.com/craig8/openbrain/internal/docparse"
 	"github.com/craig8/openbrain/internal/extract"
@@ -135,14 +136,11 @@ func mergeMetadata(base, overlay map[string]any) map[string]any {
 	return merged
 }
 
-// defaultIngestMaxBytes is the fallback file size limit (50 MB) when config is zero.
-const defaultIngestMaxBytes int64 = 50 * 1024 * 1024
-
 // checkFileSize rejects files that exceed the configured maximum size.
-// A zero maxBytes value falls back to defaultIngestMaxBytes.
+// A zero maxBytes value falls back to config.DefaultIngestMaxBytes.
 func checkFileSize(filePath string, maxBytes int64) error {
 	if maxBytes <= 0 {
-		maxBytes = defaultIngestMaxBytes
+		maxBytes = config.DefaultIngestMaxBytes
 	}
 	info, err := os.Stat(filePath)
 	if err != nil {
