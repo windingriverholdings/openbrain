@@ -38,8 +38,8 @@ func TestIngestDocument_RejectsUnsupportedFormat(t *testing.T) {
 	cfg := &config.Config{IngestDir: dir}
 	b := New(nil, nil, cfg)
 
-	// Create a .txt file — unsupported
-	dest := filepath.Join(dir, "notes.txt")
+	// Create a .doc file — unsupported
+	dest := filepath.Join(dir, "notes.doc")
 	require.NoError(t, os.WriteFile(dest, []byte("hello"), 0644))
 
 	_, err := b.IngestDocument(context.Background(), dest, "test", false)

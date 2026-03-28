@@ -1,5 +1,5 @@
-// Package docparse provides document text extraction for PDF, DOCX, and
-// image files (via OCR). Each format implements the Parser interface.
+// Package docparse provides document text extraction for PDF, DOCX, plain-text,
+// and image files (via OCR). Each format implements the Parser interface.
 package docparse
 
 import (
@@ -18,7 +18,34 @@ const (
 	FormatPDF  Format = "pdf"
 	FormatOCR  Format = "ocr"
 	FormatDOCX Format = "docx"
+	FormatText Format = "text"
 )
+
+// textExtensions maps file extensions to FormatText.
+var textExtensions = map[string]bool{
+	".md": true, ".txt": true, ".csv": true, ".json": true,
+	".yaml": true, ".yml": true, ".toml": true, ".xml": true, ".html": true,
+	".go": true, ".py": true, ".js": true, ".ts": true,
+	".sh": true, ".sql": true, ".log": true, ".cfg": true, ".ini": true,
+	".conf": true, ".rst": true, ".tex": true,
+}
+
+// knownTextBasenames maps extensionless filenames and dotfiles that are known
+// plain-text formats.
+var knownTextBasenames = map[string]bool{
+	"makefile":         true,
+	"dockerfile":       true,
+	"license":          true,
+	".gitignore":       true,
+	".gitattributes":   true,
+	".dockerignore":    true,
+	".editorconfig":    true,
+	".env.example":     true,
+	".env.local":       true,
+	".env.development": true,
+	".env.production":  true,
+	".env.test":        true,
+}
 
 // ParseResult holds extracted text and source document metadata.
 type ParseResult struct {
@@ -32,8 +59,16 @@ type Parser interface {
 }
 
 // DetectFormat determines the document format from the file extension.
+// Extensionless files and dotfiles are matched against knownTextBasenames.
 func DetectFormat(filePath string) (Format, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
+	base := strings.ToLower(filepath.Base(filePath))
+
+	// Check known extensionless/dotfile basenames first.
+	if knownTextBasenames[base] {
+		return FormatText, nil
+	}
+
 	switch ext {
 	case ".pdf":
 		return FormatPDF, nil
@@ -42,6 +77,9 @@ func DetectFormat(filePath string) (Format, error) {
 	case ".docx":
 		return FormatDOCX, nil
 	default:
+		if textExtensions[ext] {
+			return FormatText, nil
+		}
 		return "", fmt.Errorf("unsupported file format: %q", ext)
 	}
 }
@@ -59,6 +97,12 @@ func NewParser(format Format, cfg *config.Config) (Parser, error) {
 		return &ocrParser{langs: langs}, nil
 	case FormatDOCX:
 		return &docxParser{}, nil
+	case FormatText:
+		maxBytes := config.DefaultIngestMaxBytes
+		if cfg != nil && cfg.IngestMaxBytes > 0 {
+			maxBytes = cfg.IngestMaxBytes
+		}
+		return &textParser{maxBytes: maxBytes}, nil
 	default:
 		return nil, fmt.Errorf("no parser for format: %q", format)
 	}

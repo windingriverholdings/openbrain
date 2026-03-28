@@ -16,6 +16,11 @@ import (
 // ISO 639-2 codes separated by plus signs (e.g. "eng", "eng+fra+deu").
 var tesseractLangsPattern = regexp.MustCompile(`^[a-z]{3}(\+[a-z]{3})*$`)
 
+// DefaultIngestMaxBytes is the fallback file-size limit (50 MB) used when no
+// explicit value is configured. Exported so both docparse and brain can share
+// a single constant instead of duplicating the magic number.
+const DefaultIngestMaxBytes int64 = 50 * 1024 * 1024
+
 // defaultSearchScoreThreshold is the baseline min-score for search results.
 // Lowered from 0.35 to 0.15 to avoid filtering out valid matches in small corpora.
 const defaultSearchScoreThreshold = 0.15
