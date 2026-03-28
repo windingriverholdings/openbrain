@@ -23,6 +23,15 @@ func serveMCP(_ context.Context, cfg *config.Config, b *brain.Brain, embedder em
 
 var thoughtTypeEnum = []string{"decision", "insight", "person", "meeting", "idea", "note", "memory"}
 
+var validThoughtTypes = map[string]bool{
+	"decision": true, "insight": true, "person": true,
+	"meeting": true, "idea": true, "note": true, "memory": true,
+}
+
+var validSearchModes = map[string]bool{
+	"hybrid": true, "vector": true, "keyword": true,
+}
+
 func registerTools(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embedder) {
 	s.AddTool(
 		mcp.NewTool("capture_thought",
@@ -91,6 +100,7 @@ func registerTools(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embe
 		),
 		mcpExtract(b),
 	)
+
 }
 
 // mcpCapture routes capture through brain.Capture.
@@ -124,9 +134,25 @@ func mcpSearch(b *brain.Brain) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := request.GetArguments()
 		query, _ := args["query"].(string)
-		mode := stringArg(args, "mode", "hybrid")
 
-		results, err := b.Search(ctx, query, mode)
+		mode := stringArg(args, "mode", "hybrid")
+		if !validSearchModes[mode] {
+			return toolError(fmt.Sprintf("invalid mode %q: must be one of hybrid, vector, keyword", mode)), nil
+		}
+
+		thoughtType := stringArg(args, "thought_type", "")
+		if thoughtType != "" && !validThoughtTypes[thoughtType] {
+			return toolError(fmt.Sprintf("invalid thought_type %q: must be one of decision, insight, person, meeting, idea, note, memory", thoughtType)), nil
+		}
+
+		opts := brain.SearchOpts{
+			Mode:           mode,
+			ThoughtType:    thoughtType,
+			Tags:           stringListArg(args, "tags"),
+			IncludeHistory: boolArg(args, "include_history", false),
+		}
+
+		results, err := b.Search(ctx, query, opts)
 		if err != nil {
 			return toolError(err.Error()), nil
 		}
@@ -177,7 +203,7 @@ func mcpBulkImport(b *brain.Brain) server.ToolHandlerFunc {
 		source := stringArg(args, "source", "import")
 
 		var imported int
-		var errors []string
+		var errs []string
 		for _, t := range thoughts {
 			obj, ok := t.(map[string]any)
 			if !ok {
@@ -203,15 +229,15 @@ func mcpBulkImport(b *brain.Brain) server.ToolHandlerFunc {
 
 			_, err := b.Capture(ctx, parsed, source)
 			if err != nil {
-				errors = append(errors, err.Error())
+				errs = append(errs, err.Error())
 				continue
 			}
 			imported++
 		}
 
 		result := fmt.Sprintf("Imported %d/%d thoughts", imported, len(thoughts))
-		if len(errors) > 0 {
-			result += fmt.Sprintf("\nErrors: %s", strings.Join(errors, "; "))
+		if len(errs) > 0 {
+			result += fmt.Sprintf("\nErrors: %s", strings.Join(errs, "; "))
 		}
 		return toolText(result), nil
 	}
@@ -282,6 +308,13 @@ func toolError(text string) *mcp.CallToolResult {
 
 func stringArg(args map[string]any, key, fallback string) string {
 	if v, ok := args[key].(string); ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
+func boolArg(args map[string]any, key string, fallback bool) bool {
+	if v, ok := args[key].(bool); ok {
 		return v
 	}
 	return fallback

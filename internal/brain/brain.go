@@ -44,7 +44,7 @@ func (b *Brain) Dispatch(ctx context.Context, parsed intent.ParsedIntent, source
 	case intent.Review:
 		return b.formatReview(ctx, 7)
 	case intent.Search:
-		return b.formatSearch(ctx, parsed.Text, "hybrid")
+		return b.formatSearch(ctx, parsed.Text, SearchOpts{Mode: "hybrid"})
 	case intent.Supersede:
 		return b.Supersede(ctx, parsed, source)
 	case intent.Extract:
@@ -78,20 +78,52 @@ func (b *Brain) Capture(ctx context.Context, parsed intent.ParsedIntent, source 
 	return fmt.Sprintf("Captured [%s] %s (%s)", parsed.ThoughtType, id[:8], source), nil
 }
 
+// SearchOpts holds optional filters for search operations.
+type SearchOpts struct {
+	Mode           string
+	ThoughtType    string
+	Tags           []string
+	IncludeHistory bool
+}
+
+// filteredSearchMinThreshold is the default minimum score threshold used when
+// a type filter is applied, since filtered searches on small corpora need more
+// lenient scoring than unfiltered searches.
+const filteredSearchMinThreshold = 0.01
+
+// effectiveThreshold returns a lowered score threshold when a type filter
+// is applied, since filtered searches on small corpora need more lenient scoring.
+func effectiveThreshold(base float64, filteredThreshold float64, opts SearchOpts) float64 {
+	if opts.ThoughtType != "" {
+		return filteredThreshold
+	}
+	return base
+}
+
 // Search performs a search and returns structured results.
-func (b *Brain) Search(ctx context.Context, query, mode string) ([]model.ThoughtRow, error) {
+//
+// NOTE: Tags filtering (opts.Tags) is currently only applied in vector mode.
+// Keyword and hybrid searches ignore tags — this is a known limitation that
+// should be addressed when those query paths gain tag support in the DB layer.
+func (b *Brain) Search(ctx context.Context, query string, opts SearchOpts) ([]model.ThoughtRow, error) {
 	embedding, err := b.embedder.Embed(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
 
-	switch mode {
+	filteredThresh := b.cfg.SearchFilteredThreshold
+	if filteredThresh == 0 {
+		filteredThresh = filteredSearchMinThreshold
+	}
+	threshold := effectiveThreshold(b.cfg.SearchScoreThreshold, filteredThresh, opts)
+
+	switch opts.Mode {
 	case "keyword":
-		return db.KeywordSearchThoughts(ctx, b.pool, query, b.cfg.SearchTopK, false)
+		return db.KeywordSearchThoughts(ctx, b.pool, query, b.cfg.SearchTopK, opts.IncludeHistory, opts.ThoughtType)
 	case "vector":
-		return db.SearchThoughts(ctx, b.pool, embedding, b.cfg.SearchTopK, "", nil, b.cfg.SearchScoreThreshold)
+		return db.SearchThoughts(ctx, b.pool, embedding, b.cfg.SearchTopK, opts.ThoughtType, opts.Tags, threshold)
 	default:
-		return db.HybridSearchThoughts(ctx, b.pool, query, embedding, b.cfg.SearchTopK, 0.3, 0.7, b.cfg.SearchScoreThreshold, false)
+		return db.HybridSearchThoughts(ctx, b.pool, query, embedding, b.cfg.SearchTopK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType)
 	}
 }
 
@@ -148,17 +180,17 @@ func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, sou
 	}
 
 	var captured []string
-	var errors []string
+	var errs []string
 	for _, c := range candidates {
 		embedding, err := b.embedder.Embed(ctx, c.Content)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("embed %q: %v", c.Content[:min(30, len(c.Content))], err))
+			errs = append(errs, fmt.Sprintf("embed %q: %v", c.Content[:min(30, len(c.Content))], err))
 			continue
 		}
 
 		id, err := db.InsertThought(ctx, b.pool, c.Content, embedding, c.ThoughtType, c.Tags, source, nil, nil)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("insert: %v", err))
+			errs = append(errs, fmt.Sprintf("insert: %v", err))
 			continue
 		}
 
@@ -176,8 +208,8 @@ func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, sou
 	}
 
 	result := fmt.Sprintf("Extracted %d thoughts: %s", len(captured), strings.Join(captured, ", "))
-	if len(errors) > 0 {
-		result += fmt.Sprintf("\n%d errors: %s", len(errors), strings.Join(errors, "; "))
+	if len(errs) > 0 {
+		result += fmt.Sprintf("\n%d errors: %s", len(errs), strings.Join(errs, "; "))
 	}
 	return result, nil
 }
@@ -249,8 +281,8 @@ func (b *Brain) formatReview(ctx context.Context, days int) (string, error) {
 	return sb.String(), nil
 }
 
-func (b *Brain) formatSearch(ctx context.Context, query, mode string) (string, error) {
-	results, err := b.Search(ctx, query, mode)
+func (b *Brain) formatSearch(ctx context.Context, query string, opts SearchOpts) (string, error) {
+	results, err := b.Search(ctx, query, opts)
 	if err != nil {
 		return "", err
 	}
