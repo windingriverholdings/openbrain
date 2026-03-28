@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -15,6 +16,11 @@ import (
 // tesseractLangsPattern validates TesseractLangs as one or more 3-letter
 // ISO 639-2 codes separated by plus signs (e.g. "eng", "eng+fra+deu").
 var tesseractLangsPattern = regexp.MustCompile(`^[a-z]{3}(\+[a-z]{3})*$`)
+
+// markitdownPathPattern validates MarkitdownPath as either a plain basename
+// (no path separators) or an absolute path. Rejects shell metacharacters,
+// whitespace, and path traversal.
+var markitdownPathPattern = regexp.MustCompile(`^(/[A-Za-z0-9._/-]+|[A-Za-z0-9._-]+)$`)
 
 // DefaultIngestMaxBytes is the fallback file-size limit (50 MB) used when no
 // explicit value is configured. Exported so both docparse and brain can share
@@ -76,6 +82,8 @@ type Config struct {
 	OllamaBaseURL        string `env:"OPENBRAIN_OLLAMA_BASE_URL" envDefault:"http://localhost:11434"`
 	AnthropicAPIKey      string `env:"OPENBRAIN_ANTHROPIC_API_KEY"`
 
+	// External tool paths
+	MarkitdownPath string `env:"OPENBRAIN_MARKITDOWN_PATH" envDefault:"markitdown"`
 }
 
 // DBUrl returns the PostgreSQL connection string.
@@ -91,6 +99,22 @@ func (c *Config) WebAddr() string {
 	return fmt.Sprintf("%s:%d", c.WebHost, c.WebPort)
 }
 
+// validateMarkitdownPath checks that the configured binary path is safe:
+// either a plain basename (e.g. "markitdown") or an absolute path. Rejects
+// path traversal (..), whitespace, and shell metacharacters.
+func validateMarkitdownPath(p string) error {
+	if p == "" {
+		return nil
+	}
+	if strings.Contains(p, "..") {
+		return fmt.Errorf("invalid OPENBRAIN_MARKITDOWN_PATH %q: must not contain path traversal (..)", p)
+	}
+	if !markitdownPathPattern.MatchString(p) {
+		return fmt.Errorf("invalid OPENBRAIN_MARKITDOWN_PATH %q: must be a plain basename or absolute path with no whitespace or shell metacharacters", p)
+	}
+	return nil
+}
+
 // Load reads .env and parses environment variables into a Config.
 // Each call creates a fresh Config — the caller owns the result.
 func Load() (*Config, error) {
@@ -101,6 +125,9 @@ func Load() (*Config, error) {
 	}
 	if c.TesseractLangs != "" && !tesseractLangsPattern.MatchString(c.TesseractLangs) {
 		return nil, fmt.Errorf("invalid OPENBRAIN_TESSERACT_LANGS %q: must match pattern lang(+lang)* where lang is 3 lowercase letters", c.TesseractLangs)
+	}
+	if err := validateMarkitdownPath(c.MarkitdownPath); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
