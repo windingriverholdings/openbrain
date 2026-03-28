@@ -59,20 +59,16 @@ func SearchThoughts(ctx context.Context, p *pgxpool.Pool, embedding []float32, t
 
 // HybridSearchThoughts performs combined keyword (BM25) + semantic (cosine) search.
 func HybridSearchThoughts(ctx context.Context, p *pgxpool.Pool, queryText string, embedding []float32, topK int, keywordWeight, semanticWeight, scoreThreshold float64, includeHistory bool) ([]model.ThoughtRow, error) {
+	currentOnly := !includeHistory
 	query := `
 		SELECT id::text, content, summary, thought_type::text,
 		       tags, source, created_at, combined_score
-		FROM hybrid_search($1, $2::vector, $3, $4, $5)`
-
-	if !includeHistory {
-		query += " WHERE is_current = TRUE"
-	}
-
-	query += " ORDER BY combined_score DESC LIMIT $6"
+		FROM hybrid_search($1, $2::vector, $3, $4, $5, $6, $7)
+		ORDER BY combined_score DESC LIMIT $8`
 
 	rows, err := p.Query(ctx, query,
 		queryText, VecLiteral(embedding), topK*2,
-		keywordWeight, semanticWeight, topK,
+		keywordWeight, semanticWeight, scoreThreshold, currentOnly, topK,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("hybrid search: %w", err)
