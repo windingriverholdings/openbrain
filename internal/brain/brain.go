@@ -13,6 +13,7 @@ import (
 
 	"github.com/craig8/openbrain/internal/config"
 	"github.com/craig8/openbrain/internal/db"
+	"github.com/craig8/openbrain/internal/docparse"
 	"github.com/craig8/openbrain/internal/embeddings"
 	"github.com/craig8/openbrain/internal/extract"
 	"github.com/craig8/openbrain/internal/intent"
@@ -44,7 +45,7 @@ func (b *Brain) Dispatch(ctx context.Context, parsed intent.ParsedIntent, source
 	case intent.Review:
 		return b.formatReview(ctx, 7)
 	case intent.Search:
-		return b.formatSearch(ctx, parsed.Text, "hybrid")
+		return b.formatSearch(ctx, parsed.Text, SearchOpts{Mode: "hybrid"})
 	case intent.Supersede:
 		return b.Supersede(ctx, parsed, source)
 	case intent.Extract:
@@ -78,20 +79,39 @@ func (b *Brain) Capture(ctx context.Context, parsed intent.ParsedIntent, source 
 	return fmt.Sprintf("Captured [%s] %s (%s)", parsed.ThoughtType, id[:8], source), nil
 }
 
+// SearchOpts holds optional filters for search operations.
+type SearchOpts struct {
+	Mode           string
+	ThoughtType    string
+	Tags           []string
+	IncludeHistory bool
+}
+
+// effectiveThreshold returns a lowered score threshold when a type filter
+// is applied, since filtered searches on small corpora need more lenient scoring.
+func effectiveThreshold(base float64, opts SearchOpts) float64 {
+	if opts.ThoughtType != "" {
+		return 0.01
+	}
+	return base
+}
+
 // Search performs a search and returns structured results.
-func (b *Brain) Search(ctx context.Context, query, mode string) ([]model.ThoughtRow, error) {
+func (b *Brain) Search(ctx context.Context, query string, opts SearchOpts) ([]model.ThoughtRow, error) {
 	embedding, err := b.embedder.Embed(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
 
-	switch mode {
+	threshold := effectiveThreshold(b.cfg.SearchScoreThreshold, opts)
+
+	switch opts.Mode {
 	case "keyword":
-		return db.KeywordSearchThoughts(ctx, b.pool, query, b.cfg.SearchTopK, false)
+		return db.KeywordSearchThoughts(ctx, b.pool, query, b.cfg.SearchTopK, opts.IncludeHistory, opts.ThoughtType)
 	case "vector":
-		return db.SearchThoughts(ctx, b.pool, embedding, b.cfg.SearchTopK, "", nil, b.cfg.SearchScoreThreshold)
+		return db.SearchThoughts(ctx, b.pool, embedding, b.cfg.SearchTopK, opts.ThoughtType, opts.Tags, threshold)
 	default:
-		return db.HybridSearchThoughts(ctx, b.pool, query, embedding, b.cfg.SearchTopK, 0.3, 0.7, b.cfg.SearchScoreThreshold, false)
+		return db.HybridSearchThoughts(ctx, b.pool, query, embedding, b.cfg.SearchTopK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType)
 	}
 }
 
@@ -182,6 +202,99 @@ func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, sou
 	return result, nil
 }
 
+// IngestDocument parses a document file, extracts text, and captures thoughts.
+// If autoCapture is false, it returns the extracted text without capturing.
+func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, autoCapture bool) (string, error) {
+	format, err := docparse.DetectFormat(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	parser, err := docparse.NewParser(format, b.cfg)
+	if err != nil {
+		return "", err
+	}
+
+	result, err := parser.Parse(ctx, filePath)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", format, err)
+	}
+
+	if !autoCapture {
+		return fmt.Sprintf("Extracted %d characters from %s\n\n%s", len(result.Text), filePath, result.Text), nil
+	}
+
+	parsed := intent.ParsedIntent{
+		Intent:      intent.Extract,
+		Text:        result.Text,
+		ThoughtType: "note",
+	}
+	return b.DeepCaptureWithMeta(ctx, parsed, source, result.Metadata)
+}
+
+// DeepCaptureWithMeta extracts thoughts via LLM and merges document metadata into each.
+func (b *Brain) DeepCaptureWithMeta(ctx context.Context, parsed intent.ParsedIntent, source string, meta map[string]any) (string, error) {
+	candidates, err := extract.ExtractThoughts(ctx, parsed.Text)
+	if err != nil {
+		slog.Warn("extraction failed, falling back to simple capture", "error", err)
+		return b.Capture(ctx, parsed, source)
+	}
+
+	if len(candidates) == 0 {
+		return b.Capture(ctx, parsed, source)
+	}
+
+	var captured []string
+	var errors []string
+	for _, c := range candidates {
+		embedding, err := b.embedder.Embed(ctx, c.Content)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("embed %q: %v", c.Content[:min(30, len(c.Content))], err))
+			continue
+		}
+
+		thoughtMeta := mergeMeta(meta, map[string]any{
+			"extracted_from": "document",
+		})
+
+		id, err := db.InsertThought(ctx, b.pool, c.Content, embedding, c.ThoughtType, c.Tags, source, nil, thoughtMeta)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("insert: %v", err))
+			continue
+		}
+
+		var subjects []model.SubjectLink
+		for _, s := range c.Subjects {
+			subjects = append(subjects, model.SubjectLink{Name: s, Type: "concept"})
+		}
+		if len(subjects) > 0 {
+			if err := db.LinkSubjects(ctx, b.pool, id, subjects); err != nil {
+				slog.Warn("failed to link subjects", "error", err)
+			}
+		}
+
+		captured = append(captured, fmt.Sprintf("[%s] %s", c.ThoughtType, id[:8]))
+	}
+
+	result := fmt.Sprintf("Ingested document → extracted %d thoughts: %s", len(captured), strings.Join(captured, ", "))
+	if len(errors) > 0 {
+		result += fmt.Sprintf("\n%d errors: %s", len(errors), strings.Join(errors, "; "))
+	}
+	return result, nil
+}
+
+// mergeMeta creates a new map combining base and extra metadata without mutation.
+func mergeMeta(base, extra map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(extra))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range extra {
+		merged[k] = v
+	}
+	return merged
+}
+
 // --- Formatting helpers (text output for CLI/chat) ---
 
 func (b *Brain) reload() (string, error) {
@@ -249,8 +362,8 @@ func (b *Brain) formatReview(ctx context.Context, days int) (string, error) {
 	return sb.String(), nil
 }
 
-func (b *Brain) formatSearch(ctx context.Context, query, mode string) (string, error) {
-	results, err := b.Search(ctx, query, mode)
+func (b *Brain) formatSearch(ctx context.Context, query string, opts SearchOpts) (string, error) {
+	results, err := b.Search(ctx, query, opts)
 	if err != nil {
 		return "", err
 	}

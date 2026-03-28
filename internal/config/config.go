@@ -11,6 +11,10 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// defaultSearchScoreThreshold is the baseline min-score for search results.
+// Lowered from 0.35 to 0.15 to avoid filtering out valid matches in small corpora.
+const defaultSearchScoreThreshold = 0.15
+
 // Config holds all application settings, loaded from environment variables
 // with the OPENBRAIN_ prefix.
 type Config struct {
@@ -31,7 +35,7 @@ type Config struct {
 
 	// Retrieval
 	SearchTopK           int     `env:"OPENBRAIN_SEARCH_TOP_K" envDefault:"10"`
-	SearchScoreThreshold float64 `env:"OPENBRAIN_SEARCH_SCORE_THRESHOLD" envDefault:"0.35"`
+	SearchScoreThreshold float64 `env:"OPENBRAIN_SEARCH_SCORE_THRESHOLD" envDefault:"0.15"`
 
 	// Telegram
 	TelegramBotToken      string `env:"OPENBRAIN_TELEGRAM_BOT_TOKEN"`
@@ -53,6 +57,9 @@ type Config struct {
 	ExtractFastThreshold int    `env:"OPENBRAIN_EXTRACT_FAST_THRESHOLD" envDefault:"500"`
 	OllamaBaseURL        string `env:"OPENBRAIN_OLLAMA_BASE_URL" envDefault:"http://localhost:11434"`
 	AnthropicAPIKey      string `env:"OPENBRAIN_ANTHROPIC_API_KEY"`
+
+	// Document ingestion
+	TesseractLangs string `env:"OPENBRAIN_TESSERACT_LANGS" envDefault:"eng"`
 }
 
 // DBUrl returns the PostgreSQL connection string.

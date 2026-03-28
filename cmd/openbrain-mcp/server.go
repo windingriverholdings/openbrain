@@ -91,6 +91,16 @@ func registerTools(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embe
 		),
 		mcpExtract(b),
 	)
+
+	s.AddTool(
+		mcp.NewTool("ingest_document",
+			mcp.WithDescription("Ingest a document file (PDF, image via OCR, DOCX), extract text, and capture thoughts. Supported: .pdf, .png, .jpg, .jpeg, .tiff, .tif, .bmp, .docx"),
+			mcp.WithString("file_path", mcp.Required(), mcp.Description("Absolute path to the document file")),
+			mcp.WithBoolean("auto_capture", mcp.Description("Auto-capture extracted thoughts (default: true)")),
+			mcp.WithString("source", mcp.Description("Source identifier for captured thoughts")),
+		),
+		mcpIngestDocument(b),
+	)
 }
 
 // mcpCapture routes capture through brain.Capture.
@@ -124,9 +134,15 @@ func mcpSearch(b *brain.Brain) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := request.GetArguments()
 		query, _ := args["query"].(string)
-		mode := stringArg(args, "mode", "hybrid")
 
-		results, err := b.Search(ctx, query, mode)
+		opts := brain.SearchOpts{
+			Mode:           stringArg(args, "mode", "hybrid"),
+			ThoughtType:    stringArg(args, "thought_type", ""),
+			Tags:           stringListArg(args, "tags"),
+			IncludeHistory: boolArg(args, "include_history", false),
+		}
+
+		results, err := b.Search(ctx, query, opts)
 		if err != nil {
 			return toolError(err.Error()), nil
 		}
@@ -247,6 +263,33 @@ func mcpExtract(b *brain.Brain) server.ToolHandlerFunc {
 	}
 }
 
+// mcpIngestDocument handles document ingestion through brain.IngestDocument.
+func mcpIngestDocument(b *brain.Brain) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.GetArguments()
+		filePath, _ := args["file_path"].(string)
+		if filePath == "" {
+			return toolError("file_path is required"), nil
+		}
+
+		if !strings.HasPrefix(filePath, "/") {
+			return toolError("file_path must be an absolute path"), nil
+		}
+
+		autoCapture := true
+		if ac, ok := args["auto_capture"].(bool); ok {
+			autoCapture = ac
+		}
+		source := stringArg(args, "source", "document")
+
+		result, err := b.IngestDocument(ctx, filePath, source, autoCapture)
+		if err != nil {
+			return toolError(err.Error()), nil
+		}
+		return toolText(result), nil
+	}
+}
+
 // extractOnly calls the extract package without capturing.
 func extractOnly(ctx context.Context, text string) ([]any, error) {
 	candidates, err := extractPkg(ctx, text)
@@ -282,6 +325,13 @@ func toolError(text string) *mcp.CallToolResult {
 
 func stringArg(args map[string]any, key, fallback string) string {
 	if v, ok := args[key].(string); ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
+func boolArg(args map[string]any, key string, fallback bool) bool {
+	if v, ok := args[key].(bool); ok {
 		return v
 	}
 	return fallback
