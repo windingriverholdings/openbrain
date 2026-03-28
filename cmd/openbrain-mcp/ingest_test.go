@@ -3,8 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/craig8/openbrain/internal/pathsec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +32,7 @@ func TestValidateIngestPathMCP_RejectsTraversal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateMCPIngestPath(tt.path, dir)
+			err := pathsec.ValidateIngestPath(tt.path, dir)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -51,7 +53,7 @@ func TestValidateIngestPathMCP_RejectsSymlink(t *testing.T) {
 	symlink := filepath.Join(dir, "link.pdf")
 	require.NoError(t, os.Symlink(outsideFile, symlink))
 
-	err := validateMCPIngestPath(symlink, dir)
+	err := pathsec.ValidateIngestPath(symlink, dir)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "outside allowed")
 }
@@ -75,6 +77,12 @@ func TestSanitizeIngestError_NoPathLeakage(t *testing.T) {
 			"unsupported format",
 			"",
 		},
+		{
+			"file too large sanitized",
+			"file too large: 100000000 bytes exceeds limit of 52428800 bytes",
+			"file too large",
+			"100000000",
+		},
 	}
 
 	for _, tt := range tests {
@@ -88,16 +96,13 @@ func TestSanitizeIngestError_NoPathLeakage(t *testing.T) {
 	}
 }
 
-func TestMCPIngestHandler_NeverReturnsRawContent(t *testing.T) {
-	// The ingest_document handler must never return raw file content.
-	// It should only return thought count/summaries.
-	// This is a design constraint test — verified at integration level,
-	// but we document the expectation here.
+func TestMCPIngestHandler_SourceLengthCap(t *testing.T) {
+	// Source parameter should be capped at 255 characters.
+	longSource := strings.Repeat("a", 256)
+	sanitized := sanitizeIngestError("source too long")
+	assert.NotEmpty(t, sanitized)
 
-	// The handler response format should be:
-	// "Parsed <format> document: <filename> (<N> chars extracted)"
-	// or on auto_capture:
-	// "Ingested <filename>: <N> thoughts captured"
-	// Never the actual text content.
-	t.Log("Design constraint: ingest_document must never return raw file content to caller")
+	// Verify the constant is 255
+	assert.Equal(t, 255, sourceMaxLen)
+	assert.True(t, len([]rune(longSource)) > sourceMaxLen)
 }

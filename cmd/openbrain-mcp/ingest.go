@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/craig8/openbrain/internal/brain"
 	"github.com/craig8/openbrain/internal/config"
+	"github.com/craig8/openbrain/internal/pathsec"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// sourceMaxLen is the maximum allowed length for the source parameter.
+const sourceMaxLen = 255
 
 // mcpIngestDocument handles the ingest_document MCP tool.
 // SECURITY: validates paths, never returns raw file content.
@@ -22,7 +25,11 @@ func mcpIngestDocument(b *brain.Brain, cfg *config.Config) server.ToolHandlerFun
 		source := stringArg(args, "source", "claude")
 		autoCapture := boolArg(args, "auto_capture", true)
 
-		if err := validateMCPIngestPath(filePath, cfg.IngestDir); err != nil {
+		if len([]rune(source)) > sourceMaxLen {
+			return toolError("source parameter exceeds 255 character limit"), nil
+		}
+
+		if err := pathsec.ValidateIngestPath(filePath, cfg.IngestDir); err != nil {
 			return toolError(sanitizeIngestError(err.Error())), nil
 		}
 
@@ -33,59 +40,6 @@ func mcpIngestDocument(b *brain.Brain, cfg *config.Config) server.ToolHandlerFun
 
 		return toolText(result), nil
 	}
-}
-
-// validateMCPIngestPath validates an ingestion file path at the MCP layer.
-// Rejects empty, relative, traversal, and out-of-bounds paths including symlinks.
-func validateMCPIngestPath(path, allowedDir string) error {
-	if path == "" {
-		return fmt.Errorf("file_path is required")
-	}
-
-	if allowedDir == "" {
-		return fmt.Errorf("ingestion not configured: OPENBRAIN_INGEST_DIR not set")
-	}
-
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("file_path must be an absolute path")
-	}
-
-	// Clean and check for .. components
-	cleaned := filepath.Clean(path)
-	for _, part := range strings.Split(cleaned, string(filepath.Separator)) {
-		if part == ".." {
-			return fmt.Errorf("path outside allowed ingestion directory")
-		}
-	}
-
-	// Resolve allowed dir
-	allowedResolved, err := filepath.EvalSymlinks(filepath.Clean(allowedDir))
-	if err != nil {
-		return fmt.Errorf("ingestion directory unavailable")
-	}
-
-	// Prefix check
-	if !strings.HasPrefix(cleaned, allowedResolved+string(filepath.Separator)) && cleaned != allowedResolved {
-		return fmt.Errorf("path outside allowed ingestion directory")
-	}
-
-	// Resolve symlinks for the actual file
-	resolved, err := filepath.EvalSymlinks(cleaned)
-	if err != nil {
-		// If file doesn't exist, resolve parent
-		resolved, err = filepath.EvalSymlinks(filepath.Dir(cleaned))
-		if err != nil {
-			return fmt.Errorf("path not accessible")
-		}
-		resolved = filepath.Join(resolved, filepath.Base(cleaned))
-	}
-
-	// Final resolved check
-	if !strings.HasPrefix(resolved, allowedResolved+string(filepath.Separator)) && resolved != allowedResolved {
-		return fmt.Errorf("path outside allowed ingestion directory")
-	}
-
-	return nil
 }
 
 // sanitizeIngestError removes internal path information from error messages
@@ -106,6 +60,9 @@ func sanitizeIngestError(errMsg string) string {
 	}
 	if strings.Contains(errMsg, "unsupported") {
 		return errMsg // format errors are safe to return
+	}
+	if strings.Contains(errMsg, "file too large") {
+		return fmt.Sprintf("file too large (limit: configurable via OPENBRAIN_INGEST_MAX_BYTES)")
 	}
 
 	// For any other error, return a generic message

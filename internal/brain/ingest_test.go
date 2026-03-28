@@ -192,36 +192,16 @@ func TestMergeMetadata_ImmutableMerge(t *testing.T) {
 	assert.Len(t, overlay, 2)
 }
 
-func TestValidateIngestPath_SecurityCases(t *testing.T) {
-	dir := t.TempDir()
+func TestTruncate_RuneSafe(t *testing.T) {
+	// ASCII: truncate at 5 runes
+	assert.Equal(t, "hello", truncate("hello world", 5))
 
-	tests := []struct {
-		name    string
-		path    string
-		wantErr string
-	}{
-		{"empty path", "", "empty"},
-		{"relative path", "docs/file.pdf", "absolute"},
-		{"dot-dot traversal", filepath.Join(dir, "..", "etc", "passwd"), "outside allowed"},
-		{"outside dir entirely", "/usr/share/doc/test.pdf", "outside allowed"},
-	}
+	// Short string: returned as-is
+	assert.Equal(t, "hi", truncate("hi", 10))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateIngestPath(tt.path, dir)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.wantErr)
-		})
-	}
-}
+	// Multi-byte: truncate at 3 runes should not split a character
+	assert.Equal(t, "日本語", truncate("日本語テスト", 3))
 
-func TestValidateIngestPath_AcceptsValidPath(t *testing.T) {
-	dir := t.TempDir()
-
-	// Create a real file inside the dir
-	validFile := filepath.Join(dir, "report.pdf")
-	require.NoError(t, os.WriteFile(validFile, []byte("fake pdf"), 0644))
-
-	err := validateIngestPath(validFile, dir)
-	assert.NoError(t, err)
+	// Emoji: each emoji is one rune
+	assert.Equal(t, "🎉🎊", truncate("🎉🎊🎈", 2))
 }

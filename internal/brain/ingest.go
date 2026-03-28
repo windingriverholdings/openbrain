@@ -12,6 +12,7 @@ import (
 	"github.com/craig8/openbrain/internal/docparse"
 	"github.com/craig8/openbrain/internal/extract"
 	"github.com/craig8/openbrain/internal/model"
+	"github.com/craig8/openbrain/internal/pathsec"
 )
 
 // IngestDocument detects format, parses the file, and optionally auto-captures
@@ -21,7 +22,7 @@ func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, aut
 		return "", fmt.Errorf("ingestion not configured: OPENBRAIN_INGEST_DIR not set")
 	}
 
-	if err := validateIngestPath(filePath, b.cfg.IngestDir); err != nil {
+	if err := pathsec.ValidateIngestPath(filePath, b.cfg.IngestDir); err != nil {
 		return "", err
 	}
 
@@ -134,59 +135,6 @@ func mergeMetadata(base, overlay map[string]any) map[string]any {
 	return merged
 }
 
-// validateIngestPath validates that a file path is safe for ingestion:
-// - Must not be empty
-// - Must be absolute
-// - Must resolve (after cleaning and symlink eval) to within allowedDir
-func validateIngestPath(path, allowedDir string) error {
-	if path == "" {
-		return fmt.Errorf("file path is empty")
-	}
-
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("file path must be absolute, got relative path")
-	}
-
-	// Clean the path to resolve any .. components
-	cleaned := filepath.Clean(path)
-
-	// Reject paths that still contain .. after cleaning (defense in depth)
-	for _, part := range strings.Split(cleaned, string(filepath.Separator)) {
-		if part == ".." {
-			return fmt.Errorf("path outside allowed ingestion directory")
-		}
-	}
-
-	// Resolve the allowed directory (in case it contains symlinks)
-	allowedResolved, err := filepath.EvalSymlinks(filepath.Clean(allowedDir))
-	if err != nil {
-		return fmt.Errorf("cannot resolve allowed directory: %w", err)
-	}
-
-	// Quick prefix check before attempting symlink resolution
-	if !strings.HasPrefix(cleaned, allowedResolved+string(filepath.Separator)) && cleaned != allowedResolved {
-		return fmt.Errorf("path outside allowed ingestion directory")
-	}
-
-	// Resolve symlinks to get the real path (catches symlink escapes)
-	resolved, err := filepath.EvalSymlinks(cleaned)
-	if err != nil {
-		// If file doesn't exist, resolve the parent directory
-		resolved, err = filepath.EvalSymlinks(filepath.Dir(cleaned))
-		if err != nil {
-			return fmt.Errorf("cannot resolve path: %w", err)
-		}
-		resolved = filepath.Join(resolved, filepath.Base(cleaned))
-	}
-
-	// Final check: resolved path must still be within allowed directory
-	if !strings.HasPrefix(resolved, allowedResolved+string(filepath.Separator)) && resolved != allowedResolved {
-		return fmt.Errorf("path outside allowed ingestion directory")
-	}
-
-	return nil
-}
-
 // defaultIngestMaxBytes is the fallback file size limit (50 MB) when config is zero.
 const defaultIngestMaxBytes int64 = 50 * 1024 * 1024
 
@@ -206,10 +154,12 @@ func checkFileSize(filePath string, maxBytes int64) error {
 	return nil
 }
 
-// truncate returns the first n characters of s, or s if shorter.
+// truncate returns the first n runes of s, or s if shorter.
+// Operates on runes to avoid splitting multi-byte UTF-8 characters.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n]
+	return string(runes[:n])
 }
