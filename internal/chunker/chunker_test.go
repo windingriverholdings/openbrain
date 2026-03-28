@@ -54,7 +54,10 @@ func TestChunkText_LongText_MultipleChunks(t *testing.T) {
 }
 
 func TestChunkText_OverlapVerification(t *testing.T) {
-	// Build text long enough for multiple chunks with known content.
+	// Uniform repeating text is used deliberately: it contains no natural
+	// break points (\n\n, \n, ". "), so the chunker cuts at exact window
+	// boundaries. This makes the overlap region deterministic and lets us
+	// assert exact tail/head equality between consecutive chunks.
 	text := strings.Repeat("abcdefghij", 300) // 3000 chars
 	windowSize := 500
 	overlap := 50

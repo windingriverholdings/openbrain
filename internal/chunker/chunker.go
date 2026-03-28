@@ -105,8 +105,10 @@ func findNaturalBreak(runes []rune, pos, end, windowSize int) int {
 	for _, sep := range breakCandidates {
 		idx := strings.LastIndex(searchRegion, sep)
 		if idx >= 0 {
-			// Convert byte offset within searchRegion to a rune count,
-			// including the separator so the break sits after it.
+			// strings.LastIndex returns a byte offset, but chunk boundaries
+			// are tracked as rune indices into a []rune slice. Convert the
+			// byte position to a rune count via RuneCountInString. We add
+			// len(sep) bytes so the break falls after the separator.
 			runeIdx := utf8.RuneCountInString(searchRegion[:idx+len(sep)])
 			return searchStart + runeIdx
 		}

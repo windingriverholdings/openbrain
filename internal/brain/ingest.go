@@ -88,6 +88,9 @@ func (b *Brain) ingestChunks(ctx context.Context, chunks []chunker.Chunk, docMet
 			Metadata: docMeta,
 		}
 
+		// Chunk-level metadata intentionally overrides document-level metadata
+		// when keys collide. mergeMetadata applies overlay (meta) after base
+		// (docMeta), so chunk-specific fields like chunk_index take precedence.
 		meta := map[string]any{
 			"ingested_from": source,
 			"source_file":   fileName,
@@ -106,8 +109,12 @@ func (b *Brain) ingestChunks(ctx context.Context, chunks []chunker.Chunk, docMet
 		totalCaptured++
 	}
 
-	return fmt.Sprintf("Ingested %s: %d chunks, %s",
-		fileName, len(chunks), strings.Join(chunkSummaries, "; ")), nil
+	if totalCaptured == 0 {
+		return "", fmt.Errorf("all %d chunks failed during ingestion", len(chunks))
+	}
+
+	return fmt.Sprintf("Ingested %s: %d/%d chunks captured, %s",
+		fileName, totalCaptured, len(chunks), strings.Join(chunkSummaries, "; ")), nil
 }
 
 // effectiveChunkSize returns the configured chunk size, falling back to
