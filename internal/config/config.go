@@ -62,9 +62,11 @@ type Config struct {
 	WebPort int    `env:"OPENBRAIN_WEB_PORT" envDefault:"10203"`
 
 	// Document ingestion
-	IngestDir      string `env:"OPENBRAIN_INGEST_DIR"`
-	IngestMaxBytes int64  `env:"OPENBRAIN_INGEST_MAX_BYTES" envDefault:"52428800"` // 50 MB
-	TesseractLangs string `env:"OPENBRAIN_TESSERACT_LANGS" envDefault:"eng"`
+	IngestDir          string `env:"OPENBRAIN_INGEST_DIR"`
+	IngestMaxBytes     int64  `env:"OPENBRAIN_INGEST_MAX_BYTES" envDefault:"52428800"` // 50 MB
+	IngestChunkSize    int    `env:"OPENBRAIN_INGEST_CHUNK_SIZE" envDefault:"2000"`
+	IngestChunkOverlap int    `env:"OPENBRAIN_INGEST_CHUNK_OVERLAP" envDefault:"200"`
+	TesseractLangs     string `env:"OPENBRAIN_TESSERACT_LANGS" envDefault:"eng"`
 
 	// LLM extraction
 	ExtractProvider      string `env:"OPENBRAIN_EXTRACT_PROVIDER" envDefault:"none"`
