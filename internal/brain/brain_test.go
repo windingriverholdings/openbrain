@@ -43,12 +43,12 @@ func TestEffectiveThresholdLoweredForTypeFilter(t *testing.T) {
 	opts := SearchOpts{
 		ThoughtType: "decision",
 	}
-	threshold := effectiveThreshold(0.15, opts)
-	assert.Equal(t, 0.01, threshold)
+	threshold := effectiveThreshold(0.15, filteredSearchMinThreshold, opts)
+	assert.Equal(t, filteredSearchMinThreshold, threshold)
 }
 
 func TestEffectiveThresholdUnchangedWithoutTypeFilter(t *testing.T) {
 	opts := SearchOpts{}
-	threshold := effectiveThreshold(0.15, opts)
+	threshold := effectiveThreshold(0.15, filteredSearchMinThreshold, opts)
 	assert.Equal(t, 0.15, threshold)
 }

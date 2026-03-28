@@ -34,8 +34,9 @@ type Config struct {
 	MCPServerVersion string `env:"OPENBRAIN_MCP_SERVER_VERSION" envDefault:"0.1.0"`
 
 	// Retrieval
-	SearchTopK           int     `env:"OPENBRAIN_SEARCH_TOP_K" envDefault:"10"`
-	SearchScoreThreshold float64 `env:"OPENBRAIN_SEARCH_SCORE_THRESHOLD" envDefault:"0.15"`
+	SearchTopK              int     `env:"OPENBRAIN_SEARCH_TOP_K" envDefault:"10"`
+	SearchScoreThreshold    float64 `env:"OPENBRAIN_SEARCH_SCORE_THRESHOLD" envDefault:"0.15"`
+	SearchFilteredThreshold float64 `env:"OPENBRAIN_SEARCH_FILTERED_THRESHOLD" envDefault:"0.01"`
 
 	// Telegram
 	TelegramBotToken      string `env:"OPENBRAIN_TELEGRAM_BOT_TOKEN"`

@@ -86,11 +86,16 @@ type SearchOpts struct {
 	IncludeHistory bool
 }
 
+// filteredSearchMinThreshold is the default minimum score threshold used when
+// a type filter is applied, since filtered searches on small corpora need more
+// lenient scoring than unfiltered searches.
+const filteredSearchMinThreshold = 0.01
+
 // effectiveThreshold returns a lowered score threshold when a type filter
 // is applied, since filtered searches on small corpora need more lenient scoring.
-func effectiveThreshold(base float64, opts SearchOpts) float64 {
+func effectiveThreshold(base float64, filteredThreshold float64, opts SearchOpts) float64 {
 	if opts.ThoughtType != "" {
-		return 0.01
+		return filteredThreshold
 	}
 	return base
 }
@@ -102,7 +107,11 @@ func (b *Brain) Search(ctx context.Context, query string, opts SearchOpts) ([]mo
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
 
-	threshold := effectiveThreshold(b.cfg.SearchScoreThreshold, opts)
+	filteredThresh := b.cfg.SearchFilteredThreshold
+	if filteredThresh == 0 {
+		filteredThresh = filteredSearchMinThreshold
+	}
+	threshold := effectiveThreshold(b.cfg.SearchScoreThreshold, filteredThresh, opts)
 
 	switch opts.Mode {
 	case "keyword":
