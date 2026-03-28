@@ -74,6 +74,8 @@ type Config struct {
 	OllamaBaseURL        string `env:"OPENBRAIN_OLLAMA_BASE_URL" envDefault:"http://localhost:11434"`
 	AnthropicAPIKey      string `env:"OPENBRAIN_ANTHROPIC_API_KEY"`
 
+	// External tool paths
+	MarkitdownPath string `env:"OPENBRAIN_MARKITDOWN_PATH" envDefault:"markitdown"`
 }
 
 // DBUrl returns the PostgreSQL connection string.

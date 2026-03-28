@@ -19,6 +19,8 @@ const (
 	FormatOCR  Format = "ocr"
 	FormatDOCX Format = "docx"
 	FormatText Format = "text"
+	FormatPPTX Format = "pptx"
+	FormatXLSX Format = "xlsx"
 )
 
 // textExtensions maps file extensions to FormatText.
@@ -76,6 +78,10 @@ func DetectFormat(filePath string) (Format, error) {
 		return FormatOCR, nil
 	case ".docx":
 		return FormatDOCX, nil
+	case ".pptx":
+		return FormatPPTX, nil
+	case ".xlsx":
+		return FormatXLSX, nil
 	default:
 		if textExtensions[ext] {
 			return FormatText, nil
@@ -103,6 +109,12 @@ func NewParser(format Format, cfg *config.Config) (Parser, error) {
 			maxBytes = cfg.IngestMaxBytes
 		}
 		return &textParser{maxBytes: maxBytes}, nil
+	case FormatPPTX, FormatXLSX:
+		binPath := "markitdown"
+		if cfg != nil && cfg.MarkitdownPath != "" {
+			binPath = cfg.MarkitdownPath
+		}
+		return &markitdownParser{binPath: binPath}, nil
 	default:
 		return nil, fmt.Errorf("no parser for format: %q", format)
 	}
