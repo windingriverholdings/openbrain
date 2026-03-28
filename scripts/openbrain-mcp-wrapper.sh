@@ -5,9 +5,11 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Export all vars from .env
-set -a
-source "$REPO_DIR/.env"
-set +a
+# Export all vars from .env if it exists
+if [ -f "$REPO_DIR/.env" ]; then
+	set -a
+	source "$REPO_DIR/.env"
+	set +a
+fi
 
 exec "$REPO_DIR/bin/openbrain-mcp"
