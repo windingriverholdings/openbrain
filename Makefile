@@ -1,4 +1,4 @@
-GO      ?= /snap/go/current/bin/go
+GO      ?= go
 GOTOOLCHAIN := local
 export GOTOOLCHAIN
 BINDIR  := bin
