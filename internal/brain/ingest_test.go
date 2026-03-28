@@ -112,6 +112,47 @@ func TestIngestDocument_RejectsEmptyIngestDir(t *testing.T) {
 	assert.Contains(t, err.Error(), "not configured")
 }
 
+func TestCheckFileSize_RejectsOversized(t *testing.T) {
+	dir := t.TempDir()
+	bigFile := filepath.Join(dir, "big.pdf")
+
+	// Write a file that's 1024 bytes
+	require.NoError(t, os.WriteFile(bigFile, make([]byte, 1024), 0644))
+
+	// Limit of 512 bytes should reject it
+	err := checkFileSize(bigFile, 512)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "file too large")
+
+	// Limit of 2048 bytes should accept it
+	err = checkFileSize(bigFile, 2048)
+	assert.NoError(t, err)
+}
+
+func TestCheckFileSize_FallsBackToDefault(t *testing.T) {
+	dir := t.TempDir()
+	smallFile := filepath.Join(dir, "small.pdf")
+	require.NoError(t, os.WriteFile(smallFile, []byte("data"), 0644))
+
+	// Zero maxBytes should use default (50 MB), so small file passes
+	err := checkFileSize(smallFile, 0)
+	assert.NoError(t, err)
+}
+
+func TestIngestDocument_RejectsOversizedFile(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{IngestDir: dir, IngestMaxBytes: 100}
+	b := New(nil, nil, cfg)
+
+	// Create a file that exceeds 100 bytes
+	dest := filepath.Join(dir, "large.pdf")
+	require.NoError(t, os.WriteFile(dest, make([]byte, 200), 0644))
+
+	_, err := b.IngestDocument(context.Background(), dest, "test", false)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "file too large")
+}
+
 func TestDeepCaptureWithMeta_SignatureExists(t *testing.T) {
 	// Verify DeepCaptureWithMeta exists with the correct signature and
 	// handles the no-candidates case gracefully.

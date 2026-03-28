@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -21,6 +22,10 @@ func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, aut
 	}
 
 	if err := validateIngestPath(filePath, b.cfg.IngestDir); err != nil {
+		return "", err
+	}
+
+	if err := checkFileSize(filePath, b.cfg.IngestMaxBytes); err != nil {
 		return "", err
 	}
 
@@ -179,6 +184,25 @@ func validateIngestPath(path, allowedDir string) error {
 		return fmt.Errorf("path outside allowed ingestion directory")
 	}
 
+	return nil
+}
+
+// defaultIngestMaxBytes is the fallback file size limit (50 MB) when config is zero.
+const defaultIngestMaxBytes int64 = 50 * 1024 * 1024
+
+// checkFileSize rejects files that exceed the configured maximum size.
+// A zero maxBytes value falls back to defaultIngestMaxBytes.
+func checkFileSize(filePath string, maxBytes int64) error {
+	if maxBytes <= 0 {
+		maxBytes = defaultIngestMaxBytes
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("stat file: %w", err)
+	}
+	if info.Size() > maxBytes {
+		return fmt.Errorf("file too large: %d bytes exceeds limit of %d bytes", info.Size(), maxBytes)
+	}
 	return nil
 }
 

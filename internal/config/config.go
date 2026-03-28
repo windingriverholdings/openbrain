@@ -53,6 +53,7 @@ type Config struct {
 
 	// Document ingestion
 	IngestDir      string `env:"OPENBRAIN_INGEST_DIR"`
+	IngestMaxBytes int64  `env:"OPENBRAIN_INGEST_MAX_BYTES" envDefault:"52428800"` // 50 MB
 	TesseractLangs string `env:"OPENBRAIN_TESSERACT_LANGS" envDefault:"eng"`
 
 	// LLM extraction
