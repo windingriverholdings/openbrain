@@ -38,3 +38,48 @@ func TestTesseractLangsFromEnv(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "eng+fra", cfg.TesseractLangs)
 }
+
+func TestTesseractLangsValidation_RejectsInvalid(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"uppercase", "ENG"},
+		{"too short", "en"},
+		{"too long", "english"},
+		{"bad separator", "eng-fra"},
+		{"trailing plus", "eng+"},
+		{"leading plus", "+eng"},
+		{"numbers", "en3"},
+		{"spaces", "eng fra"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OPENBRAIN_TESSERACT_LANGS", tt.value)
+			_, err := Load()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "OPENBRAIN_TESSERACT_LANGS")
+		})
+	}
+}
+
+func TestTesseractLangsValidation_AcceptsValid(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"single lang", "eng"},
+		{"two langs", "eng+fra"},
+		{"three langs", "eng+fra+deu"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OPENBRAIN_TESSERACT_LANGS", tt.value)
+			cfg, err := Load()
+			assert.NoError(t, err)
+			assert.Equal(t, tt.value, cfg.TesseractLangs)
+		})
+	}
+}
