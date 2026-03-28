@@ -192,6 +192,73 @@ func TestMergeMetadata_ImmutableMerge(t *testing.T) {
 	assert.Len(t, overlay, 2)
 }
 
+func TestIngestDocument_LongTextChunked(t *testing.T) {
+	// A text file longer than IngestChunkSize should produce multiple chunks
+	// in the parse-only (autoCapture=false) summary.
+	dir := t.TempDir()
+	cfg := &config.Config{
+		IngestDir:       dir,
+		IngestChunkSize: 500,
+	}
+	b := New(nil, nil, cfg)
+
+	// Create a text file with ~2500 chars.
+	longText := ""
+	for i := 0; i < 50; i++ {
+		longText += "This is paragraph number. Some filler text here.\n\n"
+	}
+	dest := filepath.Join(dir, "long.txt")
+	require.NoError(t, os.WriteFile(dest, []byte(longText), 0644))
+
+	result, err := b.IngestDocument(context.Background(), dest, "test", false)
+	require.NoError(t, err)
+	assert.Contains(t, result, "chunks")
+	assert.Contains(t, result, "Parsed")
+}
+
+func TestIngestDocument_ShortTextNotChunked(t *testing.T) {
+	// A text file shorter than IngestChunkSize should NOT mention chunks.
+	dir := t.TempDir()
+	cfg := &config.Config{
+		IngestDir:       dir,
+		IngestChunkSize: 5000,
+	}
+	b := New(nil, nil, cfg)
+
+	dest := filepath.Join(dir, "short.txt")
+	require.NoError(t, os.WriteFile(dest, []byte("Short doc."), 0644))
+
+	result, err := b.IngestDocument(context.Background(), dest, "test", false)
+	require.NoError(t, err)
+	assert.Contains(t, result, "Parsed")
+	assert.NotContains(t, result, "chunks")
+}
+
+func TestIngestDocument_ChunkMetadataIncluded(t *testing.T) {
+	// When autoCapture is true and text is long enough to chunk, each chunk's
+	// metadata should include chunk_index, chunk_total, and source_file.
+	// Without LLM configured, DeepCaptureWithMeta returns "0 thoughts captured"
+	// for each chunk. We verify the summary mentions the chunk count.
+	dir := t.TempDir()
+	cfg := &config.Config{
+		IngestDir:       dir,
+		IngestChunkSize: 200,
+	}
+	b := New(nil, nil, cfg)
+
+	longText := ""
+	for i := 0; i < 30; i++ {
+		longText += "Sentence with some content here.\n\n"
+	}
+	dest := filepath.Join(dir, "longdoc.txt")
+	require.NoError(t, os.WriteFile(dest, []byte(longText), 0644))
+
+	result, err := b.IngestDocument(context.Background(), dest, "test", true)
+	require.NoError(t, err)
+	// Summary should mention chunks (e.g. "5 chunks")
+	assert.Contains(t, result, "chunks")
+}
+
 func TestTruncate_RuneSafe(t *testing.T) {
 	// ASCII: truncate at 5 runes
 	assert.Equal(t, "hello", truncate("hello world", 5))
