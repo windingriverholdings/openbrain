@@ -112,7 +112,8 @@ func TestStartupScan(t *testing.T) {
 	w, err := New(mb, cfg, state)
 	require.NoError(t, err)
 
-	scanned, err := w.ScanDir(dir)
+	ctx := context.Background()
+	scanned, err := w.ScanDir(ctx, dir)
 	require.NoError(t, err)
 	// Should find note.md and doc.txt, skip temp.tmp and prog.exe
 	assert.Equal(t, 2, scanned)
@@ -140,7 +141,8 @@ func TestStartupScan_SkipsAlreadyIngested(t *testing.T) {
 	w, err := New(mb, cfg, state)
 	require.NoError(t, err)
 
-	scanned, err := w.ScanDir(dir)
+	ctx := context.Background()
+	scanned, err := w.ScanDir(ctx, dir)
 	require.NoError(t, err)
 	assert.Equal(t, 0, scanned)
 	assert.Empty(t, mb.ingestedFiles())
@@ -181,8 +183,10 @@ func TestDebounce_RapidEventsProduceSingleIngestion(t *testing.T) {
 }
 
 func TestValidateWatchDirs_RejectsNonexistent(t *testing.T) {
+	ingestDir := t.TempDir()
 	dirs := []string{"/nonexistent/dir/12345"}
-	valid := validateWatchDirs(dirs)
+	valid, err := validateWatchDirs(dirs, ingestDir)
+	require.NoError(t, err)
 	assert.Empty(t, valid)
 }
 
@@ -191,12 +195,165 @@ func TestValidateWatchDirs_RejectsFiles(t *testing.T) {
 	filePath := filepath.Join(dir, "not-a-dir.txt")
 	require.NoError(t, os.WriteFile(filePath, []byte("hi"), 0644))
 
-	valid := validateWatchDirs([]string{filePath})
+	valid, err := validateWatchDirs([]string{filePath}, dir)
+	require.NoError(t, err)
 	assert.Empty(t, valid)
 }
 
 func TestValidateWatchDirs_AcceptsValidDir(t *testing.T) {
 	dir := t.TempDir()
-	valid := validateWatchDirs([]string{dir})
+	subDir := filepath.Join(dir, "sub")
+	require.NoError(t, os.MkdirAll(subDir, 0755))
+
+	valid, err := validateWatchDirs([]string{subDir}, dir)
+	require.NoError(t, err)
+	assert.Equal(t, []string{subDir}, valid)
+}
+
+func TestValidateWatchDirs_AcceptsIngestDirItself(t *testing.T) {
+	dir := t.TempDir()
+	valid, err := validateWatchDirs([]string{dir}, dir)
+	require.NoError(t, err)
 	assert.Equal(t, []string{dir}, valid)
+}
+
+func TestValidateWatchDirs_RejectsOutsideIngestDir(t *testing.T) {
+	ingestDir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	_, err := validateWatchDirs([]string{outsideDir}, ingestDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside IngestDir")
+}
+
+func TestValidateWatchDirs_RejectsEmptyIngestDir(t *testing.T) {
+	dir := t.TempDir()
+	_, err := validateWatchDirs([]string{dir}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OPENBRAIN_INGEST_DIR must be set")
+}
+
+func TestValidateWatchDirs_RejectsSymlinkEscape(t *testing.T) {
+	ingestDir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	// Create symlink inside ingestDir pointing to outsideDir
+	symlinkPath := filepath.Join(ingestDir, "sneaky-link")
+	err := os.Symlink(outsideDir, symlinkPath)
+	require.NoError(t, err)
+
+	_, err = validateWatchDirs([]string{symlinkPath}, ingestDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside IngestDir")
+}
+
+func TestScanDir_RespectsContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create several files
+	for i := 0; i < 5; i++ {
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dir, fmt.Sprintf("file%d.md", i)),
+			[]byte("content"), 0644,
+		))
+	}
+
+	mb := &mockBrain{}
+	state := NewState()
+	cfg := &config.Config{
+		WatchDirs:       dir,
+		WatchDebounceMs: 100,
+		IngestDir:       dir,
+	}
+
+	w, err := New(mb, cfg, state)
+	require.NoError(t, err)
+
+	// Cancel context immediately
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, scanErr := w.ScanDir(ctx, dir)
+	assert.ErrorIs(t, scanErr, context.Canceled)
+}
+
+func TestDoIngest_SkipsSymlinks(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a real file and a symlink to it
+	realFile := filepath.Join(dir, "real.md")
+	require.NoError(t, os.WriteFile(realFile, []byte("content"), 0644))
+
+	symlinkFile := filepath.Join(dir, "link.md")
+	require.NoError(t, os.Symlink(realFile, symlinkFile))
+
+	mb := &mockBrain{}
+	state := NewState()
+	cfg := &config.Config{
+		WatchDirs:       dir,
+		WatchDebounceMs: 100,
+		IngestDir:       dir,
+	}
+
+	w, err := New(mb, cfg, state)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Ingest the symlink — should be rejected
+	w.doIngest(ctx, symlinkFile)
+
+	files := mb.ingestedFiles()
+	assert.Empty(t, files, "symlink should not be ingested")
+}
+
+func TestDoIngest_SkipsWhenContextCancelled(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "note.md")
+	require.NoError(t, os.WriteFile(filePath, []byte("content"), 0644))
+
+	mb := &mockBrain{}
+	state := NewState()
+	cfg := &config.Config{
+		WatchDirs:       dir,
+		WatchDebounceMs: 100,
+		IngestDir:       dir,
+	}
+
+	w, err := New(mb, cfg, state)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	w.doIngest(ctx, filePath)
+
+	files := mb.ingestedFiles()
+	assert.Empty(t, files, "cancelled context should prevent ingestion")
+}
+
+func TestIngestionFailure_DoesNotMarkState(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "note.md")
+	require.NoError(t, os.WriteFile(filePath, []byte("content"), 0644))
+
+	mb := &mockBrain{err: fmt.Errorf("simulated ingestion failure")}
+	state := NewState()
+	cfg := &config.Config{
+		WatchDirs:       dir,
+		WatchDebounceMs: 100,
+		IngestDir:       dir,
+	}
+
+	w, err := New(mb, cfg, state)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	w.doIngest(ctx, filePath)
+
+	// File should NOT be marked as ingested
+	info, err := os.Lstat(filePath)
+	require.NoError(t, err)
+	assert.True(t, state.ShouldIngest(filePath, info.ModTime()),
+		"failed ingestion should not mark file in state")
 }

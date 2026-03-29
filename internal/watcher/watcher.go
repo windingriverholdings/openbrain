@@ -13,7 +13,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/craig8/openbrain/internal/config"
-	"github.com/craig8/openbrain/internal/docparse"
 )
 
 // Ingester is the interface the watcher uses to ingest files. This allows
@@ -22,8 +21,8 @@ type Ingester interface {
 	IngestFile(ctx context.Context, filePath, source string, metadata map[string]any) (string, error)
 }
 
-// tempSuffixes are file extensions that indicate incomplete/temporary files.
-var tempSuffixes = []string{".tmp", "~", ".swp", ".part", ".crdownload"}
+// defaultWorkerPoolSize is the maximum number of concurrent ingestion goroutines.
+const defaultWorkerPoolSize = 4
 
 // Watcher monitors directories for file changes and auto-ingests documents.
 type Watcher struct {
@@ -34,6 +33,7 @@ type Watcher struct {
 	fsw         *fsnotify.Watcher
 	pending     map[string]*time.Timer
 	pendingLock sync.Mutex
+	sem         chan struct{} // bounded worker pool semaphore
 }
 
 // New creates a Watcher. Does not start watching — call Watch to begin.
@@ -55,32 +55,45 @@ func New(ingester Ingester, cfg *config.Config, state *State) (*Watcher, error) 
 		debounceMs: debounce,
 		fsw:        fsw,
 		pending:    make(map[string]*time.Timer),
+		sem:        make(chan struct{}, defaultWorkerPoolSize),
 	}, nil
 }
 
 // Watch starts watching all configured directories. Blocks until ctx is cancelled.
 func (w *Watcher) Watch(ctx context.Context) error {
 	dirs := ParseWatchDirs(w.cfg.WatchDirs)
-	valid := validateWatchDirs(dirs)
+	valid, err := validateWatchDirs(dirs, w.cfg.IngestDir)
+	if err != nil {
+		return fmt.Errorf("watch dir validation: %w", err)
+	}
 
 	if len(valid) == 0 {
 		return fmt.Errorf("no valid watch directories configured")
 	}
 
+	slog.Info("watching top-level files only; subdirectories not monitored")
+
 	// Startup scan: ingest files added while daemon was down
 	for _, dir := range valid {
-		scanned, err := w.ScanDir(dir)
-		if err != nil {
-			slog.Warn("startup scan failed", "dir", dir, "error", err)
+		scanned, scanErr := w.ScanDir(ctx, dir)
+		if scanErr != nil {
+			slog.Warn("startup scan failed", "dir", dir, "error", scanErr)
 		} else {
 			slog.Info("startup scan complete", "dir", dir, "files_ingested", scanned)
 		}
 	}
 
+	// Batch state save after startup scan completes
+	if w.cfg.WatchStateFile != "" {
+		if saveErr := w.state.Save(w.cfg.WatchStateFile); saveErr != nil {
+			slog.Warn("failed to save state after startup scan", "error", saveErr)
+		}
+	}
+
 	// Add directories to fsnotify
 	for _, dir := range valid {
-		if err := w.fsw.Add(dir); err != nil {
-			slog.Warn("failed to watch directory", "dir", dir, "error", err)
+		if addErr := w.fsw.Add(dir); addErr != nil {
+			slog.Warn("failed to watch directory", "dir", dir, "error", addErr)
 		} else {
 			slog.Info("watching directory", "dir", dir)
 		}
@@ -145,19 +158,39 @@ func (w *Watcher) scheduleIngest(ctx context.Context, filePath string) {
 	}
 
 	w.pending[filePath] = time.AfterFunc(time.Duration(w.debounceMs)*time.Millisecond, func() {
+		// Acquire semaphore slot for bounded concurrency
+		w.sem <- struct{}{}
+		defer func() { <-w.sem }()
 		w.doIngest(ctx, filePath)
 	})
 }
 
 // doIngest performs the actual ingestion of a single file.
 func (w *Watcher) doIngest(ctx context.Context, filePath string) {
+	// Check context before doing any work (debounce ctx check)
+	if ctx.Err() != nil {
+		return
+	}
+
 	w.pendingLock.Lock()
 	delete(w.pending, filePath)
 	w.pendingLock.Unlock()
 
-	info, err := os.Stat(filePath)
+	// TOCTOU mitigation: use Lstat to detect symlinks before ingestion
+	info, err := os.Lstat(filePath)
 	if err != nil {
-		slog.Warn("cannot stat file for ingestion", "path", filePath, "error", err)
+		slog.Warn("cannot lstat file for ingestion", "path", filePath, "error", err)
+		return
+	}
+
+	// Reject symlinks — only ingest regular files
+	if info.Mode()&os.ModeSymlink != 0 {
+		slog.Warn("skipping symlink", "path", filePath)
+		return
+	}
+
+	if !info.Mode().IsRegular() {
+		slog.Warn("skipping non-regular file", "path", filePath)
 		return
 	}
 
@@ -178,8 +211,8 @@ func (w *Watcher) doIngest(ctx context.Context, filePath string) {
 
 	// Persist state after each successful ingestion
 	if w.cfg.WatchStateFile != "" {
-		if err := w.state.Save(w.cfg.WatchStateFile); err != nil {
-			slog.Warn("failed to save state", "error", err)
+		if saveErr := w.state.Save(w.cfg.WatchStateFile); saveErr != nil {
+			slog.Warn("failed to save state", "error", saveErr)
 		}
 	}
 }
@@ -196,19 +229,24 @@ func (w *Watcher) cancelPending() {
 
 // ScanDir performs a startup scan of a single directory, ingesting any files
 // that haven't been ingested yet or have changed since last ingestion.
-// Returns the number of files ingested. Rate-limits to avoid overwhelming
-// on first run with large directories.
-func (w *Watcher) ScanDir(dir string) (int, error) {
+// Returns the number of files ingested. Respects ctx cancellation.
+// State is NOT saved per-file; the caller is responsible for batch-saving
+// after the scan completes.
+func (w *Watcher) ScanDir(ctx context.Context, dir string) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, fmt.Errorf("read dir %s: %w", dir, err)
 	}
 
-	ctx := context.Background()
 	ingested := 0
 	scanned := 0
 
 	for _, entry := range entries {
+		// Check context in scan loop
+		if ctx.Err() != nil {
+			return ingested, ctx.Err()
+		}
+
 		if entry.IsDir() {
 			continue
 		}
@@ -219,13 +257,22 @@ func (w *Watcher) ScanDir(dir string) (int, error) {
 		}
 
 		filePath := filepath.Join(dir, name)
-		info, err := entry.Info()
+
+		// TOCTOU mitigation: use Lstat to reject symlinks during scan
+		fileInfo, err := os.Lstat(filePath)
 		if err != nil {
-			slog.Warn("cannot stat file during scan", "path", filePath, "error", err)
+			slog.Warn("cannot lstat file during scan", "path", filePath, "error", err)
+			continue
+		}
+		if fileInfo.Mode()&os.ModeSymlink != 0 {
+			slog.Warn("skipping symlink during scan", "path", filePath)
+			continue
+		}
+		if !fileInfo.Mode().IsRegular() {
 			continue
 		}
 
-		if !w.state.ShouldIngest(filePath, info.ModTime()) {
+		if !w.state.ShouldIngest(filePath, fileInfo.ModTime()) {
 			continue
 		}
 
@@ -235,53 +282,25 @@ func (w *Watcher) ScanDir(dir string) (int, error) {
 			time.Sleep(100 * time.Millisecond)
 		}
 
+		// Acquire semaphore slot for bounded concurrency
+		w.sem <- struct{}{}
+
 		meta := w.buildAutoTagMeta(filePath)
-		result, err := w.ingester.IngestFile(ctx, filePath, "watchd-scan", meta)
-		if err != nil {
-			slog.Warn("scan ingestion failed", "path", filePath, "error", err)
+		result, ingestErr := w.ingester.IngestFile(ctx, filePath, "watchd-scan", meta)
+
+		<-w.sem // release semaphore
+
+		if ingestErr != nil {
+			slog.Warn("scan ingestion failed", "path", filePath, "error", ingestErr)
 			continue
 		}
 
-		w.state.MarkIngested(filePath, info.ModTime())
+		w.state.MarkIngested(filePath, fileInfo.ModTime())
 		slog.Info("scan ingested file", "path", filePath, "result", result)
 		ingested++
 	}
 
 	return ingested, nil
-}
-
-// ParseWatchDirs splits a comma-separated list of directory paths.
-func ParseWatchDirs(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	dirs := make([]string, 0, len(parts))
-	for _, p := range parts {
-		trimmed := strings.TrimSpace(p)
-		if trimmed != "" {
-			dirs = append(dirs, trimmed)
-		}
-	}
-	return dirs
-}
-
-// validateWatchDirs filters dirs to only those that exist and are directories.
-func validateWatchDirs(dirs []string) []string {
-	valid := make([]string, 0, len(dirs))
-	for _, dir := range dirs {
-		info, err := os.Stat(dir)
-		if err != nil {
-			slog.Warn("watch dir does not exist", "dir", dir, "error", err)
-			continue
-		}
-		if !info.IsDir() {
-			slog.Warn("watch dir is not a directory", "dir", dir)
-			continue
-		}
-		valid = append(valid, dir)
-	}
-	return valid
 }
 
 // buildAutoTagMeta computes folder-based auto tags for the given file and
@@ -309,20 +328,4 @@ func findWatchRoot(dirs []string, filePath string) string {
 		}
 	}
 	return ""
-}
-
-// isTempFile returns true if the filename has a temporary file suffix.
-func isTempFile(name string) bool {
-	for _, suffix := range tempSuffixes {
-		if strings.HasSuffix(name, suffix) {
-			return true
-		}
-	}
-	return false
-}
-
-// isSupportedFormat returns true if the file extension is handled by docparse.
-func isSupportedFormat(name string) bool {
-	_, err := docparse.DetectFormat(name)
-	return err == nil
 }

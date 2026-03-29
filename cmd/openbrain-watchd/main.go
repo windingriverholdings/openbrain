@@ -30,14 +30,15 @@ func main() {
 	dirs := watcher.ParseWatchDirs(cfg.WatchDirs)
 	slog.Info("configured watch directories", "count", len(dirs), "dirs", dirs)
 
-	// Determine state file path
+	if cfg.IngestDir == "" {
+		slog.Error("OPENBRAIN_INGEST_DIR must be set — watch dirs must be within IngestDir")
+		os.Exit(1)
+	}
+
+	// Determine state file path: explicit config or IngestDir-relative only (no /tmp fallback)
 	statePath := cfg.WatchStateFile
 	if statePath == "" {
-		if cfg.IngestDir != "" {
-			statePath = filepath.Join(cfg.IngestDir, ".watchd-state.json")
-		} else {
-			statePath = filepath.Join(os.TempDir(), "openbrain-watchd-state.json")
-		}
+		statePath = filepath.Join(cfg.IngestDir, ".watchd-state.json")
 	}
 	cfg.WatchStateFile = statePath
 

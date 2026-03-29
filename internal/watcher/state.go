@@ -44,12 +44,14 @@ func (s *State) MarkIngested(path string, mtime time.Time) {
 	s.Files[path] = mtime
 }
 
-// Save persists state to a JSON file. Creates parent directories if needed.
+// Save persists state to a JSON file atomically (write to .tmp then rename).
+// Creates parent directories if needed.
 func (s *State) Save(path string) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
 
@@ -58,8 +60,15 @@ func (s *State) Save(path string) error {
 		return fmt.Errorf("marshal state: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("write state file: %w", err)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return fmt.Errorf("write temp state file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		// Clean up tmp on rename failure
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename state file: %w", err)
 	}
 
 	return nil
