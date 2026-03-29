@@ -19,7 +19,7 @@ import (
 // Ingester is the interface the watcher uses to ingest files. This allows
 // testing with a mock instead of a real Brain+DB.
 type Ingester interface {
-	IngestFile(ctx context.Context, filePath, source string) (string, error)
+	IngestFile(ctx context.Context, filePath, source string, metadata map[string]any) (string, error)
 }
 
 // tempSuffixes are file extensions that indicate incomplete/temporary files.
@@ -166,7 +166,8 @@ func (w *Watcher) doIngest(ctx context.Context, filePath string) {
 		return
 	}
 
-	result, err := w.ingester.IngestFile(ctx, filePath, "watchd")
+	meta := w.buildAutoTagMeta(filePath)
+	result, err := w.ingester.IngestFile(ctx, filePath, "watchd", meta)
 	if err != nil {
 		slog.Warn("ingestion failed", "path", filePath, "error", err)
 		return
@@ -234,7 +235,8 @@ func (w *Watcher) ScanDir(dir string) (int, error) {
 			time.Sleep(100 * time.Millisecond)
 		}
 
-		result, err := w.ingester.IngestFile(ctx, filePath, "watchd-scan")
+		meta := w.buildAutoTagMeta(filePath)
+		result, err := w.ingester.IngestFile(ctx, filePath, "watchd-scan", meta)
 		if err != nil {
 			slog.Warn("scan ingestion failed", "path", filePath, "error", err)
 			continue
@@ -280,6 +282,33 @@ func validateWatchDirs(dirs []string) []string {
 		valid = append(valid, dir)
 	}
 	return valid
+}
+
+// buildAutoTagMeta computes folder-based auto tags for the given file and
+// returns a metadata map suitable for passing to the ingester.
+func (w *Watcher) buildAutoTagMeta(filePath string) map[string]any {
+	dirs := ParseWatchDirs(w.cfg.WatchDirs)
+	watchRoot := findWatchRoot(dirs, filePath)
+	if watchRoot == "" {
+		return nil
+	}
+	tags := FolderTags(filePath, watchRoot)
+	if len(tags) == 0 {
+		return nil
+	}
+	return map[string]any{"auto_tags": tags}
+}
+
+// findWatchRoot returns the configured watch directory that contains filePath.
+func findWatchRoot(dirs []string, filePath string) string {
+	cleanPath := filepath.Clean(filePath)
+	for _, dir := range dirs {
+		cleanDir := filepath.Clean(dir)
+		if strings.HasPrefix(cleanPath, cleanDir+string(filepath.Separator)) {
+			return cleanDir
+		}
+	}
+	return ""
 }
 
 // isTempFile returns true if the filename has a temporary file suffix.

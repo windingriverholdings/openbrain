@@ -16,7 +16,8 @@ func NewBrainAdapter(b *brain.Brain) *BrainAdapter {
 	return &BrainAdapter{brain: b}
 }
 
-// IngestFile delegates to Brain.IngestDocument with autoCapture enabled.
-func (a *BrainAdapter) IngestFile(ctx context.Context, filePath, source string) (string, error) {
-	return a.brain.IngestDocument(ctx, filePath, source, true)
+// IngestFile delegates to Brain.IngestDocument with autoCapture enabled,
+// forwarding any caller-supplied metadata (e.g. auto_tags from folder watcher).
+func (a *BrainAdapter) IngestFile(ctx context.Context, filePath, source string, metadata map[string]any) (string, error) {
+	return a.brain.IngestDocument(ctx, filePath, source, true, metadata)
 }

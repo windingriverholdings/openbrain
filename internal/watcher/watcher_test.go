@@ -22,7 +22,7 @@ type mockBrain struct {
 	err      error
 }
 
-func (m *mockBrain) IngestFile(ctx context.Context, filePath, source string) (string, error) {
+func (m *mockBrain) IngestFile(ctx context.Context, filePath, source string, metadata map[string]any) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {

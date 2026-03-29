@@ -20,7 +20,9 @@ import (
 
 // IngestDocument detects format, parses the file, and optionally auto-captures
 // extracted thoughts. Returns a summary string — never raw file content.
-func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, autoCapture bool) (string, error) {
+// callerMeta is optional metadata from the caller (e.g. auto_tags from the
+// folder watcher); it is merged into each thought's metadata when present.
+func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, autoCapture bool, callerMeta ...map[string]any) (string, error) {
 	if b.cfg.IngestDir == "" {
 		return "", fmt.Errorf("ingestion not configured: OPENBRAIN_INGEST_DIR not set")
 	}
@@ -52,6 +54,13 @@ func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, aut
 	chunkOverlap := effectiveChunkOverlap(b.cfg)
 	fileName := filepath.Base(filePath)
 	ingestMeta := buildIngestMetadata(filePath, b.cfg.IngestDir, string(format), time.Now().UTC())
+
+	// Merge any caller-supplied metadata (e.g. auto_tags from folder watcher).
+	for _, cm := range callerMeta {
+		if cm != nil {
+			ingestMeta = mergeMetadata(ingestMeta, cm)
+		}
+	}
 
 	// Short documents: no chunking needed.
 	if len([]rune(parsed.Text)) <= chunkSize {
@@ -149,6 +158,13 @@ func (b *Brain) DeepCaptureWithMeta(ctx context.Context, parsed docparse.ParseRe
 
 	merged := mergeMetadata(parsed.Metadata, meta)
 
+	// Apply auto_tags from metadata to each candidate's tags.
+	if autoTags, ok := merged["auto_tags"]; ok {
+		if tagSlice, ok := autoTags.([]string); ok && len(tagSlice) > 0 {
+			candidates = appendAutoTags(candidates, tagSlice)
+		}
+	}
+
 	captured, errs := captureExtracted(ctx, b, candidates, source, merged)
 
 	return formatCaptureResult(captured, errs), nil
@@ -187,6 +203,36 @@ func captureExtracted(ctx context.Context, b *Brain, candidates []extract.Candid
 	}
 
 	return captured, errs
+}
+
+// appendAutoTags returns new candidates with autoTags appended and deduplicated.
+// Does not mutate the original candidates.
+func appendAutoTags(candidates []extract.Candidate, autoTags []string) []extract.Candidate {
+	result := make([]extract.Candidate, len(candidates))
+	for i, c := range candidates {
+		seen := make(map[string]bool, len(c.Tags)+len(autoTags))
+		merged := make([]string, 0, len(c.Tags)+len(autoTags))
+		for _, t := range c.Tags {
+			if !seen[t] {
+				seen[t] = true
+				merged = append(merged, t)
+			}
+		}
+		for _, t := range autoTags {
+			if !seen[t] {
+				seen[t] = true
+				merged = append(merged, t)
+			}
+		}
+		result[i] = extract.Candidate{
+			Content:         c.Content,
+			ThoughtType:     c.ThoughtType,
+			Tags:            merged,
+			Subjects:        c.Subjects,
+			SupersedesQuery: c.SupersedesQuery,
+		}
+	}
+	return result
 }
 
 // formatCaptureResult builds a human-readable summary of captured thoughts.
