@@ -82,6 +82,11 @@ type Config struct {
 	OllamaBaseURL        string `env:"OPENBRAIN_OLLAMA_BASE_URL" envDefault:"http://localhost:11434"`
 	AnthropicAPIKey      string `env:"OPENBRAIN_ANTHROPIC_API_KEY"`
 
+	// Folder watcher
+	WatchDirs       string `env:"OPENBRAIN_WATCH_DIRS"`
+	WatchDebounceMs int    `env:"OPENBRAIN_WATCH_DEBOUNCE_MS" envDefault:"500"`
+	WatchStateFile  string `env:"OPENBRAIN_WATCH_STATE_FILE"`
+
 	// External tool paths
 	MarkitdownPath string `env:"OPENBRAIN_MARKITDOWN_PATH" envDefault:"markitdown"`
 }
