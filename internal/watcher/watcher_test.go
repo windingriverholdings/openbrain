@@ -164,6 +164,7 @@ func TestDebounce_RapidEventsProduceSingleIngestion(t *testing.T) {
 	defer cancel()
 
 	filePath := filepath.Join(dir, "note.md")
+	require.NoError(t, os.WriteFile(filePath, []byte("hello"), 0644))
 
 	// Simulate rapid writes (3 events within debounce window)
 	for i := 0; i < 3; i++ {
