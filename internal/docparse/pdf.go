@@ -50,6 +50,7 @@ func (p *pdfParser) Parse(_ context.Context, filePath string) (ParseResult, erro
 		Metadata: map[string]any{
 			"filename":        filepath.Base(filePath),
 			"format":          string(FormatPDF),
+			MetaSourceFormat:  string(FormatPDF),
 			"page_count":      pageCount,
 			"file_size_bytes": info.Size(),
 		},

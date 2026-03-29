@@ -45,6 +45,7 @@ func (p *textParser) Parse(_ context.Context, filePath string) (ParseResult, err
 		Metadata: map[string]any{
 			"filename":        filepath.Base(filePath),
 			"format":          string(FormatText),
+			MetaSourceFormat:  string(FormatText),
 			"extension":       strings.ToLower(filepath.Ext(filePath)),
 			"file_size_bytes": info.Size(),
 			"line_count":      lineCount,

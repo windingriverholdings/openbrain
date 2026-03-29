@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/craig8/openbrain/internal/chunker"
 	"github.com/craig8/openbrain/internal/config"
@@ -50,6 +51,7 @@ func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, aut
 	chunkSize := effectiveChunkSize(b.cfg)
 	chunkOverlap := effectiveChunkOverlap(b.cfg)
 	fileName := filepath.Base(filePath)
+	ingestMeta := buildIngestMetadata(filePath, b.cfg.IngestDir, string(format), time.Now().UTC())
 
 	// Short documents: no chunking needed.
 	if len([]rune(parsed.Text)) <= chunkSize {
@@ -57,7 +59,7 @@ func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, aut
 			return fmt.Sprintf("Parsed %s document: %s (%d chars extracted)",
 				format, fileName, len(parsed.Text)), nil
 		}
-		meta := map[string]any{"ingested_from": source, "source_file": fileName}
+		meta := mergeMetadata(ingestMeta, map[string]any{"ingested_from": source})
 		result, err := b.DeepCaptureWithMeta(ctx, parsed, source, meta)
 		if err != nil {
 			return "", fmt.Errorf("deep capture: %w", err)
@@ -73,12 +75,12 @@ func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, aut
 			format, fileName, len(parsed.Text), len(chunks)), nil
 	}
 
-	return b.ingestChunks(ctx, chunks, parsed.Metadata, fileName, source)
+	return b.ingestChunks(ctx, chunks, parsed.Metadata, fileName, source, ingestMeta)
 }
 
 // ingestChunks processes each chunk through DeepCaptureWithMeta and returns
 // an aggregate summary.
-func (b *Brain) ingestChunks(ctx context.Context, chunks []chunker.Chunk, docMeta map[string]any, fileName, source string) (string, error) {
+func (b *Brain) ingestChunks(ctx context.Context, chunks []chunker.Chunk, docMeta map[string]any, fileName, source string, ingestMeta map[string]any) (string, error) {
 	var totalCaptured int
 	var chunkSummaries []string
 
@@ -91,12 +93,9 @@ func (b *Brain) ingestChunks(ctx context.Context, chunks []chunker.Chunk, docMet
 		// Chunk-level metadata intentionally overrides document-level metadata
 		// when keys collide. mergeMetadata applies overlay (meta) after base
 		// (docMeta), so chunk-specific fields like chunk_index take precedence.
-		meta := map[string]any{
-			"ingested_from": source,
-			"source_file":   fileName,
-			"chunk_index":   c.Index,
-			"chunk_total":   c.Total,
-		}
+		chunkMeta := buildChunkMetadata(fileName, c.Index, c.Total)
+		meta := mergeMetadata(ingestMeta, chunkMeta)
+		meta["ingested_from"] = source
 
 		result, err := b.DeepCaptureWithMeta(ctx, chunkParsed, source, meta)
 		if err != nil {
@@ -225,6 +224,32 @@ func checkFileSize(filePath string, maxBytes int64) error {
 		return fmt.Errorf("file too large: %d bytes exceeds limit of %d bytes", info.Size(), maxBytes)
 	}
 	return nil
+}
+
+// buildIngestMetadata constructs the standard metadata map for an ingested file.
+// source_path is always relative to ingestDir (never absolute).
+func buildIngestMetadata(filePath, ingestDir, sourceFormat string, now time.Time) map[string]any {
+	relPath, err := filepath.Rel(ingestDir, filePath)
+	if err != nil {
+		// Fallback to basename if Rel fails (should not happen for validated paths).
+		relPath = filepath.Base(filePath)
+	}
+
+	return map[string]any{
+		docparse.MetaSourceFile:   filepath.Base(filePath),
+		docparse.MetaSourcePath:   relPath,
+		docparse.MetaSourceFormat: sourceFormat,
+		docparse.MetaIngestedAt:   now.Format(time.RFC3339),
+	}
+}
+
+// buildChunkMetadata constructs chunk-level metadata using standard constants.
+func buildChunkMetadata(fileName string, chunkIndex, chunkTotal int) map[string]any {
+	return map[string]any{
+		docparse.MetaSourceFile: fileName,
+		docparse.MetaChunkIndex: chunkIndex,
+		docparse.MetaChunkTotal: chunkTotal,
+	}
 }
 
 // truncate returns the first n runes of s, or s if shorter.
