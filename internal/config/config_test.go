@@ -111,6 +111,26 @@ func TestMarkitdownPathValidation_AcceptsValid(t *testing.T) {
 	}
 }
 
+func TestWatchDirsFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_WATCH_DIRS", "/tmp/docs,/tmp/notes")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Equal(t, "/tmp/docs,/tmp/notes", cfg.WatchDirs)
+}
+
+func TestWatchDebounceMsDefault(t *testing.T) {
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Equal(t, 500, cfg.WatchDebounceMs)
+}
+
+func TestWatchDebounceMsFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_WATCH_DEBOUNCE_MS", "1000")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Equal(t, 1000, cfg.WatchDebounceMs)
+}
+
 func TestTesseractLangsValidation_AcceptsValid(t *testing.T) {
 	tests := []struct {
 		name  string
