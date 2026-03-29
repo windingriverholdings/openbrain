@@ -51,6 +51,7 @@ func (p *docxParser) Parse(_ context.Context, filePath string) (ParseResult, err
 		Metadata: map[string]any{
 			"filename":        filepath.Base(filePath),
 			"format":          string(FormatDOCX),
+			MetaSourceFormat:  string(FormatDOCX),
 			"paragraph_count": len(paragraphs),
 			"file_size_bytes": info.Size(),
 		},

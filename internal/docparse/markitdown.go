@@ -84,8 +84,9 @@ func (p *markitdownParser) Parse(ctx context.Context, filePath string) (ParseRes
 	return ParseResult{
 		Text: text,
 		Metadata: map[string]any{
-			"filename": filepath.Base(filePath),
-			"format":   format,
+			"filename":       filepath.Base(filePath),
+			"format":         format,
+			MetaSourceFormat: format,
 		},
 	}, nil
 }
