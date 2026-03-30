@@ -69,6 +69,38 @@ func TestEmbed_SucceedsWithValidEmbedding(t *testing.T) {
 	assert.Equal(t, expected, result)
 }
 
+func TestEmbed_TruncatesLargeErrorBody(t *testing.T) {
+	// When Ollama returns a non-200 status with a body larger than 512 bytes,
+	// the error message must not include more than 512 bytes of the response body.
+	largeBody := make([]byte, 2048)
+	for i := range largeBody {
+		largeBody[i] = 'X'
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write(largeBody)
+	}))
+	defer srv.Close()
+
+	embedder := newTestEmbedder(srv.URL)
+	_, err := embedder.Embed(context.Background(), "test text")
+
+	require.Error(t, err, "Embed must return an error on non-200 status")
+	// The error message should contain at most 512 bytes of the response body,
+	// not the full 2048 bytes.
+	errMsg := err.Error()
+	// Count how many 'X' characters are in the error — should be at most 512
+	xCount := 0
+	for _, c := range errMsg {
+		if c == 'X' {
+			xCount++
+		}
+	}
+	assert.LessOrEqual(t, xCount, 512, "Error body should be truncated to at most 512 bytes")
+	assert.Greater(t, xCount, 0, "Error should contain some of the response body")
+}
+
 func TestEmbedBatch_ReturnsErrorOnEmptyEmbedding(t *testing.T) {
 	// If any embedding in a batch comes back empty, the batch should fail.
 	callCount := 0
