@@ -1,0 +1,196 @@
+package main
+
+import (
+	"context"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"strconv"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/craig8/openbrain/internal/brain"
+	"github.com/craig8/openbrain/internal/config"
+	"github.com/craig8/openbrain/internal/intent"
+)
+
+//go:embed static
+var staticFS embed.FS
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		// Local-only server — allow all origins.
+		return true
+	},
+}
+
+func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain) error {
+	mux := http.NewServeMux()
+
+	staticSub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return fmt.Errorf("static fs: %w", err)
+	}
+	mux.Handle("/", http.FileServer(http.FS(staticSub)))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+
+	mux.HandleFunc("/api/search", apiSearch(b))
+	mux.HandleFunc("/api/capture", apiCapture(b))
+	mux.HandleFunc("/api/stats", apiStats(b))
+	mux.HandleFunc("/api/review", apiReview(b))
+	mux.HandleFunc("/ws", wsHandler(b))
+
+	srv := &http.Server{Addr: cfg.WebAddr(), Handler: mux}
+
+	// Graceful shutdown on context cancellation
+	go func() {
+		<-ctx.Done()
+		slog.Info("shutting down web server")
+		srv.Shutdown(context.Background())
+	}()
+
+	err = srv.ListenAndServe()
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
+}
+
+func apiSearch(b *brain.Brain) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			http.Error(w, "missing q parameter", http.StatusBadRequest)
+			return
+		}
+
+		parsed := intent.ParsedIntent{Intent: intent.Search, Text: query, ThoughtType: "note"}
+		result, err := b.Dispatch(r.Context(), parsed, "web")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		jsonResponse(w, map[string]string{"result": result})
+	}
+}
+
+func apiCapture(b *brain.Brain) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var body struct {
+			Content     string   `json:"content"`
+			ThoughtType string   `json:"thought_type"`
+			Tags        []string `json:"tags"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+
+		if body.ThoughtType == "" {
+			body.ThoughtType = intent.InferType(body.Content)
+		}
+
+		parsed := intent.ParsedIntent{
+			Intent:      intent.Capture,
+			Text:        body.Content,
+			ThoughtType: body.ThoughtType,
+			Tags:        body.Tags,
+		}
+		result, err := b.Dispatch(r.Context(), parsed, "web")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		jsonResponse(w, map[string]string{"result": result})
+	}
+}
+
+func apiStats(b *brain.Brain) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		parsed := intent.ParsedIntent{Intent: intent.Stats, Text: "stats", ThoughtType: "note"}
+		result, err := b.Dispatch(r.Context(), parsed, "web")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"result": result})
+	}
+}
+
+func apiReview(b *brain.Brain) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		days := 7
+		if d := r.URL.Query().Get("days"); d != "" {
+			if n, err := strconv.Atoi(d); err == nil && n > 0 {
+				days = n
+			}
+		}
+		_ = days // TODO: pass configurable days to brain.GetReview
+
+		parsed := intent.ParsedIntent{Intent: intent.Review, Text: "review", ThoughtType: "note"}
+		result, err := b.Dispatch(r.Context(), parsed, "web")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"result": result})
+	}
+}
+
+type wsMessage struct {
+	Message string `json:"message"`
+}
+
+type wsResponse struct {
+	Response string `json:"response"`
+}
+
+func wsHandler(b *brain.Brain) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			slog.Error("websocket upgrade failed", "error", err)
+			return
+		}
+		defer conn.Close()
+
+		for {
+			var msg wsMessage
+			if err := conn.ReadJSON(&msg); err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+					slog.Error("websocket read error", "error", err)
+				}
+				return
+			}
+
+			parsed := intent.Parse(msg.Message)
+			result, err := b.Dispatch(r.Context(), parsed, "web")
+			if err != nil {
+				result = fmt.Sprintf("Error: %v", err)
+			}
+
+			if err := conn.WriteJSON(wsResponse{Response: result}); err != nil {
+				slog.Error("websocket write error", "error", err)
+				return
+			}
+		}
+	}
+}
+
+func jsonResponse(w http.ResponseWriter, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}

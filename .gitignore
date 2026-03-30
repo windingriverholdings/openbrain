@@ -11,3 +11,11 @@ dist/
 *.egg-info/
 logs/
 *.log
+
+# Go
+bin/
+openbrain-mcp
+coverage.out
+
+# Claude
+.claude/

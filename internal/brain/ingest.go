@@ -1,0 +1,309 @@
+package brain
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/craig8/openbrain/internal/chunker"
+	"github.com/craig8/openbrain/internal/config"
+	"github.com/craig8/openbrain/internal/db"
+	"github.com/craig8/openbrain/internal/docparse"
+	"github.com/craig8/openbrain/internal/extract"
+	"github.com/craig8/openbrain/internal/model"
+	"github.com/craig8/openbrain/internal/pathsec"
+)
+
+// IngestDocument detects format, parses the file, and optionally auto-captures
+// extracted thoughts. Returns a summary string — never raw file content.
+// callerMeta is optional metadata from the caller (e.g. auto_tags from the
+// folder watcher); it is merged into each thought's metadata when present.
+func (b *Brain) IngestDocument(ctx context.Context, filePath, source string, autoCapture bool, callerMeta ...map[string]any) (string, error) {
+	if b.cfg.IngestDir == "" {
+		return "", fmt.Errorf("ingestion not configured: OPENBRAIN_INGEST_DIR not set")
+	}
+
+	if err := pathsec.ValidateIngestPath(filePath, b.cfg.IngestDir); err != nil {
+		return "", err
+	}
+
+	if err := checkFileSize(filePath, b.cfg.IngestMaxBytes); err != nil {
+		return "", err
+	}
+
+	format, err := docparse.DetectFormat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("detect format: %w", err)
+	}
+
+	parser, err := docparse.NewParser(format, b.cfg)
+	if err != nil {
+		return "", fmt.Errorf("create parser: %w", err)
+	}
+
+	parsed, err := parser.Parse(ctx, filePath)
+	if err != nil {
+		return "", fmt.Errorf("parse document: %w", err)
+	}
+
+	chunkSize := effectiveChunkSize(b.cfg)
+	chunkOverlap := effectiveChunkOverlap(b.cfg)
+	fileName := filepath.Base(filePath)
+	ingestMeta := buildIngestMetadata(filePath, b.cfg.IngestDir, string(format), time.Now().UTC())
+
+	// Merge any caller-supplied metadata (e.g. auto_tags from folder watcher).
+	for _, cm := range callerMeta {
+		if cm != nil {
+			ingestMeta = mergeMetadata(ingestMeta, cm)
+		}
+	}
+
+	// Short documents: no chunking needed.
+	if len([]rune(parsed.Text)) <= chunkSize {
+		if !autoCapture {
+			return fmt.Sprintf("Parsed %s document: %s (%d chars extracted)",
+				format, fileName, len(parsed.Text)), nil
+		}
+		meta := mergeMetadata(ingestMeta, map[string]any{"ingested_from": source})
+		result, err := b.DeepCaptureWithMeta(ctx, parsed, source, meta)
+		if err != nil {
+			return "", fmt.Errorf("deep capture: %w", err)
+		}
+		return fmt.Sprintf("Ingested %s: %s", fileName, result), nil
+	}
+
+	// Long documents: chunk and process each piece.
+	chunks := chunker.ChunkText(parsed.Text, chunkSize, chunkOverlap)
+
+	if !autoCapture {
+		return fmt.Sprintf("Parsed %s document: %s (%d chars extracted, %d chunks)",
+			format, fileName, len(parsed.Text), len(chunks)), nil
+	}
+
+	return b.ingestChunks(ctx, chunks, parsed.Metadata, fileName, source, ingestMeta)
+}
+
+// ingestChunks processes each chunk through DeepCaptureWithMeta and returns
+// an aggregate summary.
+func (b *Brain) ingestChunks(ctx context.Context, chunks []chunker.Chunk, docMeta map[string]any, fileName, source string, ingestMeta map[string]any) (string, error) {
+	var totalCaptured int
+	var chunkSummaries []string
+
+	for _, c := range chunks {
+		chunkParsed := docparse.ParseResult{
+			Text:     c.Text,
+			Metadata: docMeta,
+		}
+
+		// Chunk-level metadata intentionally overrides document-level metadata
+		// when keys collide. mergeMetadata applies overlay (meta) after base
+		// (docMeta), so chunk-specific fields like chunk_index take precedence.
+		chunkMeta := buildChunkMetadata(fileName, c.Index, c.Total)
+		meta := mergeMetadata(ingestMeta, chunkMeta)
+		meta["ingested_from"] = source
+
+		result, err := b.DeepCaptureWithMeta(ctx, chunkParsed, source, meta)
+		if err != nil {
+			slog.Warn("chunk capture failed", "chunk", c.Index, "error", err)
+			chunkSummaries = append(chunkSummaries, fmt.Sprintf("chunk %d: error: %v", c.Index, err))
+			continue
+		}
+
+		chunkSummaries = append(chunkSummaries, fmt.Sprintf("chunk %d: %s", c.Index, result))
+		totalCaptured++
+	}
+
+	if totalCaptured == 0 {
+		return "", fmt.Errorf("all %d chunks failed during ingestion", len(chunks))
+	}
+
+	return fmt.Sprintf("Ingested %s: %d/%d chunks captured, %s",
+		fileName, totalCaptured, len(chunks), strings.Join(chunkSummaries, "; ")), nil
+}
+
+// effectiveChunkSize returns the configured chunk size, falling back to
+// the chunker package default.
+func effectiveChunkSize(cfg *config.Config) int {
+	if cfg != nil && cfg.IngestChunkSize > 0 {
+		return cfg.IngestChunkSize
+	}
+	return chunker.DefaultWindowSize
+}
+
+// effectiveChunkOverlap returns the configured chunk overlap, falling back
+// to the chunker package default.
+func effectiveChunkOverlap(cfg *config.Config) int {
+	if cfg != nil && cfg.IngestChunkOverlap > 0 {
+		return cfg.IngestChunkOverlap
+	}
+	return chunker.DefaultOverlap
+}
+
+// DeepCaptureWithMeta extracts multiple thoughts from a parsed document via LLM,
+// merging file metadata into each captured thought.
+func (b *Brain) DeepCaptureWithMeta(ctx context.Context, parsed docparse.ParseResult, source string, meta map[string]any) (string, error) {
+	candidates, err := extract.ExtractThoughts(ctx, parsed.Text)
+	if err != nil {
+		slog.Warn("extraction failed during ingest", "error", err)
+		return "", fmt.Errorf("extract thoughts: %w", err)
+	}
+
+	if len(candidates) == 0 {
+		return "0 thoughts captured (no extractable content)", nil
+	}
+
+	merged := mergeMetadata(parsed.Metadata, meta)
+
+	// Apply auto_tags from metadata to each candidate's tags.
+	if autoTags, ok := merged["auto_tags"]; ok {
+		if tagSlice, ok := autoTags.([]string); ok && len(tagSlice) > 0 {
+			candidates = appendAutoTags(candidates, tagSlice)
+		}
+	}
+
+	captured, errs := captureExtracted(ctx, b, candidates, source, merged)
+
+	return formatCaptureResult(captured, errs), nil
+}
+
+// captureExtracted is the shared core for DeepCapture and DeepCaptureWithMeta.
+// It embeds and stores each candidate, linking subjects as needed.
+func captureExtracted(ctx context.Context, b *Brain, candidates []extract.Candidate, source string, metadata map[string]any) ([]string, []string) {
+	var captured []string
+	var errs []string
+
+	for _, c := range candidates {
+		embedding, err := b.embedder.Embed(ctx, c.Content)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("embed %q: %v", truncate(c.Content, 30), err))
+			continue
+		}
+
+		id, err := db.InsertThought(ctx, b.pool, c.Content, embedding, c.ThoughtType, c.Tags, source, nil, metadata)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("insert: %v", err))
+			continue
+		}
+
+		var subjects []model.SubjectLink
+		for _, s := range c.Subjects {
+			subjects = append(subjects, model.SubjectLink{Name: s, Type: "concept"})
+		}
+		if len(subjects) > 0 {
+			if err := db.LinkSubjects(ctx, b.pool, id, subjects); err != nil {
+				slog.Warn("failed to link subjects", "error", err)
+			}
+		}
+
+		captured = append(captured, fmt.Sprintf("[%s] %s", c.ThoughtType, id[:8]))
+	}
+
+	return captured, errs
+}
+
+// appendAutoTags returns new candidates with autoTags appended and deduplicated.
+// Does not mutate the original candidates.
+func appendAutoTags(candidates []extract.Candidate, autoTags []string) []extract.Candidate {
+	result := make([]extract.Candidate, len(candidates))
+	for i, c := range candidates {
+		seen := make(map[string]bool, len(c.Tags)+len(autoTags))
+		merged := make([]string, 0, len(c.Tags)+len(autoTags))
+		for _, t := range c.Tags {
+			if !seen[t] {
+				seen[t] = true
+				merged = append(merged, t)
+			}
+		}
+		for _, t := range autoTags {
+			if !seen[t] {
+				seen[t] = true
+				merged = append(merged, t)
+			}
+		}
+		result[i] = extract.Candidate{
+			Content:         c.Content,
+			ThoughtType:     c.ThoughtType,
+			Tags:            merged,
+			Subjects:        c.Subjects,
+			SupersedesQuery: c.SupersedesQuery,
+		}
+	}
+	return result
+}
+
+// formatCaptureResult builds a human-readable summary of captured thoughts.
+func formatCaptureResult(captured, errs []string) string {
+	result := fmt.Sprintf("%d thoughts captured: %s", len(captured), strings.Join(captured, ", "))
+	if len(errs) > 0 {
+		result += fmt.Sprintf("\n%d errors: %s", len(errs), strings.Join(errs, "; "))
+	}
+	return result
+}
+
+// mergeMetadata creates a new metadata map from base and overlay, without mutating either.
+func mergeMetadata(base, overlay map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(overlay))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range overlay {
+		merged[k] = v
+	}
+	return merged
+}
+
+// checkFileSize rejects files that exceed the configured maximum size.
+// A zero maxBytes value falls back to config.DefaultIngestMaxBytes.
+func checkFileSize(filePath string, maxBytes int64) error {
+	if maxBytes <= 0 {
+		maxBytes = config.DefaultIngestMaxBytes
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("stat file: %w", err)
+	}
+	if info.Size() > maxBytes {
+		return fmt.Errorf("file too large: %d bytes exceeds limit of %d bytes", info.Size(), maxBytes)
+	}
+	return nil
+}
+
+// buildIngestMetadata constructs the standard metadata map for an ingested file.
+// source_path is always relative to ingestDir (never absolute).
+func buildIngestMetadata(filePath, ingestDir, sourceFormat string, now time.Time) map[string]any {
+	relPath, err := filepath.Rel(ingestDir, filePath)
+	if err != nil {
+		// Fallback to basename if Rel fails (should not happen for validated paths).
+		relPath = filepath.Base(filePath)
+	}
+
+	return map[string]any{
+		docparse.MetaSourceFile:   filepath.Base(filePath),
+		docparse.MetaSourcePath:   relPath,
+		docparse.MetaSourceFormat: sourceFormat,
+		docparse.MetaIngestedAt:   now.Format(time.RFC3339),
+	}
+}
+
+// buildChunkMetadata constructs chunk-level metadata using standard constants.
+func buildChunkMetadata(fileName string, chunkIndex, chunkTotal int) map[string]any {
+	return map[string]any{
+		docparse.MetaSourceFile: fileName,
+		docparse.MetaChunkIndex: chunkIndex,
+		docparse.MetaChunkTotal: chunkTotal,
+	}
+}
+
+// truncate returns the first n runes of s, or s if shorter.
+// Operates on runes to avoid splitting multi-byte UTF-8 characters.
+func truncate(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n])
+}

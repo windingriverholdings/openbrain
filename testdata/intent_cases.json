@@ -1,0 +1,573 @@
+[
+  {
+    "input": "help",
+    "expected_intent": "help",
+    "expected_text": "help",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "Help",
+    "expected_intent": "help",
+    "expected_text": "Help",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "HELP",
+    "expected_intent": "help",
+    "expected_text": "HELP",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "commands",
+    "expected_intent": "help",
+    "expected_text": "commands",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "what can you do",
+    "expected_intent": "help",
+    "expected_text": "what can you do",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "What can you do?",
+    "expected_intent": "help",
+    "expected_text": "What can you do?",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "?",
+    "expected_intent": "help",
+    "expected_text": "?",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "???",
+    "expected_intent": "help",
+    "expected_text": "???",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "how does this work",
+    "expected_intent": "help",
+    "expected_text": "how does this work",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "how do this work",
+    "expected_intent": "help",
+    "expected_text": "how do this work",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "stats",
+    "expected_intent": "stats",
+    "expected_text": "stats",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "stat",
+    "expected_intent": "stats",
+    "expected_text": "stat",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "statistics",
+    "expected_intent": "stats",
+    "expected_text": "statistics",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "how many thoughts",
+    "expected_intent": "stats",
+    "expected_text": "how many thoughts",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "how many memories",
+    "expected_intent": "stats",
+    "expected_text": "how many memories",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "how many notes",
+    "expected_intent": "stats",
+    "expected_text": "how many notes",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "brain stats",
+    "expected_intent": "stats",
+    "expected_text": "brain stats",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "knowledge base stats",
+    "expected_intent": "stats",
+    "expected_text": "knowledge base stats",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "count",
+    "expected_intent": "stats",
+    "expected_text": "count",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "send me some stats",
+    "expected_intent": "stats",
+    "expected_text": "send me some stats",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "give me the status",
+    "expected_intent": "stats",
+    "expected_text": "give me the status",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "show me my stats",
+    "expected_intent": "stats",
+    "expected_text": "show me my stats",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "what are my stats",
+    "expected_intent": "stats",
+    "expected_text": "what are my stats",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "what is the status",
+    "expected_intent": "stats",
+    "expected_text": "what is the status",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "weekly review",
+    "expected_intent": "review",
+    "expected_text": "weekly review",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "week review",
+    "expected_intent": "review",
+    "expected_text": "week review",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "review the week",
+    "expected_intent": "review",
+    "expected_text": "review the week",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "review week",
+    "expected_intent": "review",
+    "expected_text": "review week",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "what happened this week",
+    "expected_intent": "review",
+    "expected_text": "what happened this week",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "this week",
+    "expected_intent": "review",
+    "expected_text": "this week",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "past week",
+    "expected_intent": "review",
+    "expected_text": "past week",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "last 7 days",
+    "expected_intent": "review",
+    "expected_text": "last 7 days",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "summarise the week",
+    "expected_intent": "review",
+    "expected_text": "summarise the week",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "summarise week",
+    "expected_intent": "review",
+    "expected_text": "summarise week",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "give me a weekly review",
+    "expected_intent": "review",
+    "expected_text": "give me a weekly review",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "give me a review",
+    "expected_intent": "review",
+    "expected_text": "give me a review",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "show me the weekly review",
+    "expected_intent": "review",
+    "expected_text": "show me the weekly review",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "show me the review",
+    "expected_intent": "review",
+    "expected_text": "show me the review",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "extract: meeting notes from today's standup",
+    "expected_intent": "extract",
+    "expected_text": "meeting notes from today's standup",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "Extract: here are my notes from the call",
+    "expected_intent": "extract",
+    "expected_text": "here are my notes from the call",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "EXTRACT: long form text goes here",
+    "expected_intent": "extract",
+    "expected_text": "long form text goes here",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "actually, we switched from Redis to Valkey",
+    "expected_intent": "supersede",
+    "expected_text": "we switched from Redis to Valkey",
+    "expected_thought_type": "note",
+    "expected_supersede_query": "we switched from Redis to Valkey"
+  },
+  {
+    "input": "Actually we now use PostgreSQL",
+    "expected_intent": "supersede",
+    "expected_text": "we now use PostgreSQL",
+    "expected_thought_type": "note",
+    "expected_supersede_query": "we now use PostgreSQL"
+  },
+  {
+    "input": "update: Sarah moved to booth 7",
+    "expected_intent": "supersede",
+    "expected_text": "Sarah moved to booth 7",
+    "expected_thought_type": "note",
+    "expected_supersede_query": "Sarah moved to booth 7"
+  },
+  {
+    "input": "correction: the rate limit is 2000, not 1000",
+    "expected_intent": "supersede",
+    "expected_text": "the rate limit is 2000, not 1000",
+    "expected_thought_type": "note",
+    "expected_supersede_query": "the rate limit is 2000, not 1000"
+  },
+  {
+    "input": "changed: deploy schedule is now weekly",
+    "expected_intent": "supersede",
+    "expected_text": "deploy schedule is now weekly",
+    "expected_thought_type": "note",
+    "expected_supersede_query": "deploy schedule is now weekly"
+  },
+  {
+    "input": "no longer using Docker for local dev",
+    "expected_intent": "supersede",
+    "expected_text": "using Docker for local dev",
+    "expected_thought_type": "note",
+    "expected_supersede_query": "using Docker for local dev"
+  },
+  {
+    "input": "now instead, we use Kubernetes",
+    "expected_intent": "supersede",
+    "expected_text": "we use Kubernetes",
+    "expected_thought_type": "note",
+    "expected_supersede_query": "we use Kubernetes"
+  },
+  {
+    "input": "search: Redis decisions",
+    "expected_intent": "search",
+    "expected_text": "Redis decisions",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "find: deployment lessons",
+    "expected_intent": "search",
+    "expected_text": "deployment lessons",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "look up: project deadlines",
+    "expected_intent": "search",
+    "expected_text": "project deadlines",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "what do I know about Sarah",
+    "expected_intent": "search",
+    "expected_text": "Sarah",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "recall: meeting with Alice",
+    "expected_intent": "search",
+    "expected_text": "meeting with Alice",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "remember: the API rate limit",
+    "expected_intent": "search",
+    "expected_text": "the API rate limit",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "remind me: what was the password policy",
+    "expected_intent": "search",
+    "expected_text": "what was the password policy",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "have I thought about caching",
+    "expected_intent": "search",
+    "expected_text": "caching",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "have I noted about Docker",
+    "expected_intent": "search",
+    "expected_text": "Docker",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "show me: infrastructure decisions",
+    "expected_intent": "search",
+    "expected_text": "infrastructure decisions",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "retrieve: last month's insights",
+    "expected_intent": "search",
+    "expected_text": "last month's insights",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "query: Go vs Rust",
+    "expected_intent": "search",
+    "expected_text": "Go vs Rust",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "remember: the API rate limit is 1000 req/min",
+    "expected_intent": "search",
+    "expected_text": "the API rate limit is 1000 req/min",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "save: need to update the docs",
+    "expected_intent": "capture",
+    "expected_text": "need to update the docs",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "capture: deployment took 45 minutes today",
+    "expected_intent": "capture",
+    "expected_text": "deployment took 45 minutes today",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "note: review PR #123 tomorrow",
+    "expected_intent": "capture",
+    "expected_text": "review PR #123 tomorrow",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "log: server restarted at 3am",
+    "expected_intent": "capture",
+    "expected_text": "server restarted at 3am",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "store: backup cron runs at midnight",
+    "expected_intent": "capture",
+    "expected_text": "backup cron runs at midnight",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "record: meeting scheduled for Thursday",
+    "expected_intent": "capture",
+    "expected_text": "meeting scheduled for Thursday",
+    "expected_thought_type": "meeting"
+  },
+  {
+    "input": "add: new team member joining Monday",
+    "expected_intent": "capture",
+    "expected_text": "new team member joining Monday",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "write down: the wifi password is hunter2",
+    "expected_intent": "capture",
+    "expected_text": "the wifi password is hunter2",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "decided to use Go for the rewrite",
+    "expected_intent": "capture",
+    "expected_text": "to use Go for the rewrite",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "decided: we will migrate to Go",
+    "expected_intent": "capture",
+    "expected_text": "we will migrate to Go",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "insight: tests run faster with parallel execution",
+    "expected_intent": "capture",
+    "expected_text": "tests run faster with parallel execution",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "learning: pgvector HNSW is faster than IVFFlat",
+    "expected_intent": "capture",
+    "expected_text": "pgvector HNSW is faster than IVFFlat",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "realised that Friday deploys are risky",
+    "expected_intent": "capture",
+    "expected_text": "that Friday deploys are risky",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "realized the build takes too long",
+    "expected_intent": "capture",
+    "expected_text": "realized the build takes too long",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "met Sarah Chen, she runs engineering at Acme",
+    "expected_intent": "capture",
+    "expected_text": "Sarah Chen, she runs engineering at Acme",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "meeting with the platform team about auth",
+    "expected_intent": "capture",
+    "expected_text": "the platform team about auth",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "what did I decide about caching?",
+    "expected_intent": "search",
+    "expected_text": "what did I decide about caching",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "who is Sarah Chen?",
+    "expected_intent": "search",
+    "expected_text": "who is Sarah Chen",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "when was the last deploy?",
+    "expected_intent": "search",
+    "expected_text": "when was the last deploy",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "where is the config file?",
+    "expected_intent": "search",
+    "expected_text": "where is the config file",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "how does the auth flow work?",
+    "expected_intent": "search",
+    "expected_text": "how does the auth flow work",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "why did we choose PostgreSQL?",
+    "expected_intent": "search",
+    "expected_text": "why did we choose PostgreSQL",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "what are our deployment practices?",
+    "expected_intent": "search",
+    "expected_text": "what are our deployment practices",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "Today we had a productive meeting with the platform team. We discussed the migration from Python to Go. Key decisions: 1) Use pgx for database access, 2) Use mcp-go for the MCP server, 3) Start with Ollama for embeddings. Sarah will handle the CI/CD pipeline. Next meeting is Thursday.",
+    "expected_intent": "extract",
+    "expected_text": "Today we had a productive meeting with the platform team. We discussed the migration from Python to Go. Key decisions: 1) Use pgx for database access, 2) Use mcp-go for the MCP server, 3) Start with Ollama for embeddings. Sarah will handle the CI/CD pipeline. Next meeting is Thursday.",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "the server is running on port 8080",
+    "expected_intent": "capture",
+    "expected_text": "the server is running on port 8080",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "PostgreSQL version is 16.2",
+    "expected_intent": "capture",
+    "expected_text": "PostgreSQL version is 16.2",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "I like Go better than Python for this",
+    "expected_intent": "capture",
+    "expected_text": "I like Go better than Python for this",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "deploy window is 2am-4am PST",
+    "expected_intent": "capture",
+    "expected_text": "deploy window is 2am-4am PST",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "",
+    "expected_intent": "capture",
+    "expected_text": "",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "   ",
+    "expected_intent": "capture",
+    "expected_text": "",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "a",
+    "expected_intent": "capture",
+    "expected_text": "a",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "Hello",
+    "expected_intent": "capture",
+    "expected_text": "Hello",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "This is a medium-length statement that doesn't match any explicit patterns but is under 200 characters so it should default to capture.",
+    "expected_intent": "capture",
+    "expected_text": "This is a medium-length statement that doesn't match any explicit patterns but is under 200 characters so it should default to capture.",
+    "expected_thought_type": "note"
+  }
+]

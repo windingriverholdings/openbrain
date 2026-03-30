@@ -1,20 +1,18 @@
 [Unit]
 Description=OpenBrain Web UI (mybrain.local:10203)
-Documentation=https://github.com/windingriverholdings/my-openbrain
-After=network.target
+Documentation=https://github.com/windingriverholdings/openbrain
+After=network.target postgresql.service
 
 [Service]
 Type=simple
-WorkingDirectory=%h/repos/my-openbrain
+WorkingDirectory=%h/repos/openbrain
 
 # Load env from .env file
-EnvironmentFile=%h/repos/my-openbrain/.env
+EnvironmentFile=%h/repos/openbrain/.env
 
-# Use the pixi-managed Python
-ExecStart=%h/repos/my-openbrain/.pixi/envs/default/bin/python \
-    -m openbrain.web.app
+# Go binary — no Python, no pixi
+ExecStart=%h/repos/openbrain/bin/openbrain-web
 
-Environment=PYTHONPATH=%h/repos/my-openbrain/src
 Environment=OPENBRAIN_WEB_HOST=127.0.0.1
 Environment=OPENBRAIN_WEB_PORT=10203
 
@@ -25,12 +23,10 @@ StandardError=journal
 SyslogIdentifier=openbrain-web
 
 # Harden the service
-# NOTE: ReadWritePaths requires the directories to exist before service start.
-#       Run scripts/install-services.sh which calls mkdir -p on all cache dirs.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/repos/my-openbrain %h/.cache/huggingface /home/%i/.cache/fastembed
+ReadWritePaths=%h/repos/openbrain
 
 # TODO(tailscale): When exposing over Tailscale, change OPENBRAIN_WEB_HOST
 #                  to 0.0.0.0 (or your Tailscale IP) and add Caddy in front
