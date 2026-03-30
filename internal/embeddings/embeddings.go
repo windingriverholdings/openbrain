@@ -81,6 +81,10 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 		return nil, fmt.Errorf("decode embed response: %w", err)
 	}
 
+	if len(result.Embedding) == 0 {
+		return nil, fmt.Errorf("ollama returned empty embedding for model %s", e.model)
+	}
+
 	return result.Embedding, nil
 }
 

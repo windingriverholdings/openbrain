@@ -43,6 +43,9 @@ func VecLiteral(embedding []float32) string {
 
 // InsertThought creates a new thought and returns its UUID.
 func InsertThought(ctx context.Context, p *pgxpool.Pool, content string, embedding []float32, thoughtType string, tags []string, source string, summary *string, metadata map[string]any) (string, error) {
+	if len(embedding) == 0 {
+		return "", fmt.Errorf("insert thought: empty embedding vector (must have at least 1 dimension)")
+	}
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
