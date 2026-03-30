@@ -11,6 +11,10 @@ import (
 
 // SearchThoughts performs cosine similarity search against thought embeddings.
 func SearchThoughts(ctx context.Context, p *pgxpool.Pool, embedding []float32, topK int, thoughtType string, tags []string, scoreThreshold float64) ([]model.ThoughtRow, error) {
+	if len(embedding) == 0 {
+		return nil, fmt.Errorf("search: empty embedding vector")
+	}
+
 	query := `
 		SELECT id::text, content, summary, thought_type::text,
 		       tags, source, created_at,
@@ -60,6 +64,10 @@ func SearchThoughts(ctx context.Context, p *pgxpool.Pool, embedding []float32, t
 // HybridSearchThoughts performs combined keyword (BM25) + semantic (cosine) search.
 // thoughtType filters results to a specific thought_type; pass "" to skip filtering.
 func HybridSearchThoughts(ctx context.Context, p *pgxpool.Pool, queryText string, embedding []float32, topK int, keywordWeight, semanticWeight, scoreThreshold float64, includeHistory bool, thoughtType string) ([]model.ThoughtRow, error) {
+	if len(embedding) == 0 {
+		return nil, fmt.Errorf("search: empty embedding vector")
+	}
+
 	currentOnly := !includeHistory
 
 	// Pass filter_type as NULL when empty, so SQL applies no type filter.
