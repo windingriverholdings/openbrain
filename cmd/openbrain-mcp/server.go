@@ -113,6 +113,20 @@ func registerTools(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embe
 		mcpExtract(b),
 	)
 
+	s.AddTool(
+		mcp.NewTool("supersede_thought",
+			mcp.WithDescription("Capture a new thought and mark an older thought as superseded. Use when updated knowledge replaces a previous belief, decision, or fact. Provide old_thought_id to supersede directly, or let OpenBrain find the best match via supersedes_query."),
+			mcp.WithString("content", mcp.Required(), mcp.Description("The new thought that replaces the old one")),
+			mcp.WithString("supersedes_query", mcp.Description("Search query to find the thought being superseded; defaults to the new content")),
+			mcp.WithString("old_thought_id", mcp.Description("UUID of the thought to supersede directly (skips search)")),
+			mcp.WithString("thought_type", mcp.Enum(thoughtTypeEnum...), mcp.Description("Type of the new thought")),
+			mcp.WithArray("tags", mcp.Description("Tags for the new thought")),
+			mcp.WithString("source", mcp.Description("Source identifier")),
+			mcp.WithString("summary", mcp.Description("Optional short summary")),
+		),
+		mcpSupersede(b),
+	)
+
 }
 
 // mcpCapture routes capture through brain.Capture.
@@ -278,6 +292,40 @@ func mcpExtract(b *brain.Brain) server.ToolHandlerFunc {
 
 		parsed := intent.ParsedIntent{Intent: intent.Extract, Text: text, ThoughtType: "note"}
 		result, err := b.DeepCapture(ctx, parsed, source)
+		if err != nil {
+			return toolError(err.Error()), nil
+		}
+		return toolText(result), nil
+	}
+}
+
+// mcpSupersede routes through brain.Supersede with optional query/ID overrides.
+func mcpSupersede(b *brain.Brain) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.GetArguments()
+		content, _ := args["content"].(string)
+		thoughtType := stringArg(args, "thought_type", "")
+		if thoughtType == "" {
+			thoughtType = intent.InferType(content)
+		}
+		source := stringArg(args, "source", "claude")
+		tags := stringListArg(args, "tags")
+
+		parsed := intent.ParsedIntent{
+			Intent:      intent.Supersede,
+			Text:        content,
+			ThoughtType: thoughtType,
+			Tags:        tags,
+		}
+
+		if q := stringArg(args, "supersedes_query", ""); q != "" {
+			parsed.SupersedeQuery = &q
+		}
+		if id := stringArg(args, "old_thought_id", ""); id != "" {
+			parsed.OldThoughtID = &id
+		}
+
+		result, err := b.Supersede(ctx, parsed, source)
 		if err != nil {
 			return toolError(err.Error()), nil
 		}

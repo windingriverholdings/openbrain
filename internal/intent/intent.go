@@ -28,6 +28,7 @@ type ParsedIntent struct {
 	ThoughtType    string
 	Tags           []string
 	SupersedeQuery *string
+	OldThoughtID   *string
 }
 
 const DeepCaptureThreshold = 200
