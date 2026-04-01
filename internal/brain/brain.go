@@ -137,7 +137,10 @@ func (b *Brain) GetReview(ctx context.Context, days int) ([]model.ThoughtRow, er
 	return db.GetThoughtsSince(ctx, b.pool, days)
 }
 
-// Supersede captures a new thought and marks the best match as superseded.
+// Supersede captures a new thought and marks an older thought as superseded.
+// If parsed.OldThoughtID is set, that thought is superseded directly (no search).
+// If parsed.SupersedeQuery is set, it is embedded to find the best match instead
+// of using the new thought's own embedding.
 func (b *Brain) Supersede(ctx context.Context, parsed intent.ParsedIntent, source string) (string, error) {
 	embedding, err := b.embedder.Embed(ctx, parsed.Text)
 	if err != nil {
@@ -149,7 +152,26 @@ func (b *Brain) Supersede(ctx context.Context, parsed intent.ParsedIntent, sourc
 		return "", err
 	}
 
-	results, err := db.SearchThoughts(ctx, b.pool, embedding, 1, "", nil, 0.3)
+	// Direct supersede: caller provided the exact old thought ID.
+	if parsed.OldThoughtID != nil {
+		oldID := *parsed.OldThoughtID
+		if err := db.SupersedeThought(ctx, b.pool, oldID, newID); err != nil {
+			slog.Warn("supersede failed", "error", err)
+			return fmt.Sprintf("Captured [%s] %s (supersede failed)", parsed.ThoughtType, newID[:8]), nil
+		}
+		return fmt.Sprintf("Captured [%s] %s — supersedes %s", parsed.ThoughtType, newID[:8], oldID[:8]), nil
+	}
+
+	// Search-based supersede: embed the query (or new content) to find the best match.
+	searchEmbedding := embedding
+	if parsed.SupersedeQuery != nil {
+		searchEmbedding, err = b.embedder.Embed(ctx, *parsed.SupersedeQuery)
+		if err != nil {
+			return fmt.Sprintf("Captured [%s] %s (embed query failed)", parsed.ThoughtType, newID[:8]), nil
+		}
+	}
+
+	results, err := db.SearchThoughts(ctx, b.pool, searchEmbedding, 1, "", nil, 0.3)
 	if err != nil || len(results) == 0 {
 		return fmt.Sprintf("Captured [%s] %s (no match to supersede)", parsed.ThoughtType, newID[:8]), nil
 	}
