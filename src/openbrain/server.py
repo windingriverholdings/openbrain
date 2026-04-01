@@ -25,7 +25,6 @@ from .db import (
     keyword_search_thoughts,
     link_subjects,
     search_thoughts,
-    supersede_thought,
 )
 from .embeddings import embed, embed_batch
 
@@ -232,60 +231,6 @@ async def list_tools() -> list[Tool]:
                 "required": ["text"],
             },
         ),
-        Tool(
-            name="supersede_thought",
-            description=(
-                "Capture a new thought and mark an older thought as superseded. "
-                "Use when you have updated knowledge that replaces a previous belief, "
-                "decision, or fact. Provide old_thought_id to supersede directly, or "
-                "let OpenBrain find the best match via supersedes_query."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "string",
-                        "description": "The new thought that replaces the old one.",
-                    },
-                    "supersedes_query": {
-                        "type": "string",
-                        "description": (
-                            "Search query to find the thought being superseded. "
-                            "If omitted, the new content itself is used as the query."
-                        ),
-                    },
-                    "old_thought_id": {
-                        "type": "string",
-                        "description": (
-                            "Explicit UUID of the thought to supersede. "
-                            "If provided, skips the search entirely."
-                        ),
-                    },
-                    "thought_type": {
-                        "type": "string",
-                        "enum": ["decision", "insight", "person", "meeting", "idea", "note", "memory"],
-                        "description": "Category for the new thought.",
-                        "default": "note",
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Tags for the new thought.",
-                        "default": [],
-                    },
-                    "source": {
-                        "type": "string",
-                        "description": "Interface this thought came from.",
-                        "default": "claude",
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": "Optional one-line summary for the new thought.",
-                    },
-                },
-                "required": ["content"],
-            },
-        ),
     ]
 
 
@@ -308,8 +253,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
             return await _thought_timeline(arguments)
         elif name == "extract_thoughts":
             return await _extract_thoughts(arguments)
-        elif name == "supersede_thought":
-            return await _supersede_thought(arguments)
         else:
             return CallToolResult(
                 content=[TextContent(type="text", text=f"Unknown tool: {name}")],
@@ -543,63 +486,6 @@ async def _thought_timeline(args: dict[str, Any]) -> CallToolResult:
         lines.append("")
     return CallToolResult(
         content=[TextContent(type="text", text="\n".join(lines))]
-    )
-
-
-async def _supersede_thought(args: dict[str, Any]) -> CallToolResult:
-    content = args["content"]
-    vec = embed(content)
-
-    new_id = await insert_thought(
-        content=content,
-        embedding=vec,
-        thought_type=args.get("thought_type", "note"),
-        tags=args.get("tags", []),
-        source=args.get("source", "claude"),
-        summary=args.get("summary"),
-        metadata={},
-    )
-
-    old_thought_id = args.get("old_thought_id")
-    if old_thought_id:
-        await supersede_thought(old_thought_id, new_id)
-        return CallToolResult(
-            content=[TextContent(
-                type="text",
-                text=f"New thought saved. ID: {new_id}\nSuperseded: {old_thought_id}",
-            )]
-        )
-
-    query = args.get("supersedes_query") or content
-    query_vec = embed(query) if args.get("supersedes_query") else vec
-    candidates = await hybrid_search_thoughts(
-        query_text=query,
-        embedding=query_vec,
-        top_k=1,
-    )
-
-    if candidates and candidates[0]["score"] >= 0.3:
-        old = candidates[0]
-        await supersede_thought(old["id"], new_id)
-        return CallToolResult(
-            content=[TextContent(
-                type="text",
-                text=(
-                    f"New thought saved. ID: {new_id}\n"
-                    f"Superseded: {old['content'][:80]}... ({old['id'][:8]})"
-                ),
-            )]
-        )
-
-    return CallToolResult(
-        content=[TextContent(
-            type="text",
-            text=(
-                f"New thought saved. ID: {new_id}\n"
-                "No matching thought found to supersede "
-                "(try providing old_thought_id directly)."
-            ),
-        )]
     )
 
 
