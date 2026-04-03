@@ -111,6 +111,32 @@ func TestMarkitdownPathValidation_AcceptsValid(t *testing.T) {
 	}
 }
 
+func TestMCPHTTPEnabledDefault(t *testing.T) {
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.False(t, cfg.MCPHTTPEnabled, "MCPHTTPEnabled should default to false")
+}
+
+func TestMCPHTTPEnabledFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_MCP_HTTP_ENABLED", "true")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.True(t, cfg.MCPHTTPEnabled)
+}
+
+func TestMCPAuthTokenFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_MCP_AUTH_TOKEN", "my-secret-token")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Equal(t, "my-secret-token", cfg.MCPAuthToken)
+}
+
+func TestMCPAuthTokenDefaultEmpty(t *testing.T) {
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Empty(t, cfg.MCPAuthToken, "MCPAuthToken should default to empty")
+}
+
 func TestWatchDirsFromEnv(t *testing.T) {
 	t.Setenv("OPENBRAIN_WATCH_DIRS", "/tmp/docs,/tmp/notes")
 	cfg, err := Load()

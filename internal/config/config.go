@@ -48,6 +48,8 @@ type Config struct {
 	// MCP
 	MCPServerName    string `env:"OPENBRAIN_MCP_SERVER_NAME" envDefault:"openbrain"`
 	MCPServerVersion string `env:"OPENBRAIN_MCP_SERVER_VERSION" envDefault:"0.1.0"`
+	MCPHTTPEnabled   bool   `env:"OPENBRAIN_MCP_HTTP_ENABLED" envDefault:"false"`
+	MCPAuthToken     string `env:"OPENBRAIN_MCP_AUTH_TOKEN"`
 
 	// Retrieval
 	SearchTopK              int     `env:"OPENBRAIN_SEARCH_TOP_K" envDefault:"10"`

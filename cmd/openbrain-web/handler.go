@@ -14,7 +14,9 @@ import (
 
 	"github.com/craig8/openbrain/internal/brain"
 	"github.com/craig8/openbrain/internal/config"
+	"github.com/craig8/openbrain/internal/embeddings"
 	"github.com/craig8/openbrain/internal/intent"
+	"github.com/craig8/openbrain/internal/mcphttp"
 )
 
 //go:embed static
@@ -27,7 +29,7 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain) error {
+func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain, embedder embeddings.Embedder) error {
 	mux := http.NewServeMux()
 
 	staticSub, err := fs.Sub(staticFS, "static")
@@ -45,6 +47,13 @@ func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain) error {
 	mux.HandleFunc("/api/stats", apiStats(b))
 	mux.HandleFunc("/api/review", apiReview(b))
 	mux.HandleFunc("/ws", wsHandler(b))
+
+	// Mount MCP HTTP transports when enabled
+	if cfg.MCPHTTPEnabled && cfg.MCPAuthToken != "" {
+		slog.Info("mounting MCP HTTP transport", "endpoints", []string{"/mcp", "/sse/"})
+		mux.Handle("/mcp", mcphttp.NewMCPHandler(cfg.MCPAuthToken, b, embedder))
+		mux.Handle("/sse/", mcphttp.NewSSEHandler(cfg.MCPAuthToken, b, embedder))
+	}
 
 	srv := &http.Server{Addr: cfg.WebAddr(), Handler: mux}
 
