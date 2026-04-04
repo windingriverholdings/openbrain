@@ -37,10 +37,15 @@ func TestOAuthMetadataHandler_ReturnsCorrectJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, testIssuer, meta["issuer"])
-	assert.Equal(t, testIssuer+"/oauth/token", meta["token_endpoint"])
+	assert.Equal(t, testIssuer+"/authorize", meta["authorization_endpoint"])
+	assert.Equal(t, testIssuer+"/token", meta["token_endpoint"])
+	assert.Equal(t, testIssuer+"/register", meta["registration_endpoint"])
+	assert.Contains(t, meta["grant_types_supported"], "authorization_code")
 	assert.Contains(t, meta["grant_types_supported"], "client_credentials")
 	assert.Contains(t, meta["token_endpoint_auth_methods_supported"], "client_secret_post")
-	assert.Contains(t, meta["response_types_supported"], "token")
+	assert.Contains(t, meta["token_endpoint_auth_methods_supported"], "none")
+	assert.Contains(t, meta["response_types_supported"], "code")
+	assert.Contains(t, meta["code_challenge_methods_supported"], "S256")
 }
 
 func TestOAuthMetadataHandler_RejectsNonGET(t *testing.T) {
