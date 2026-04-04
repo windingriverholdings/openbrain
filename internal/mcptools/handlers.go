@@ -170,7 +170,10 @@ func mcpExtract(b *brain.Brain) server.ToolHandlerFunc {
 			if err != nil {
 				return toolError(err.Error()), nil
 			}
-			data, _ := json.MarshalIndent(candidates, "", "  ")
+			data, err := json.MarshalIndent(candidates, "", "  ")
+			if err != nil {
+				return toolError(fmt.Sprintf("failed to format results: %v", err)), nil
+			}
 			return toolText(fmt.Sprintf("Extracted %d candidates:\n%s", len(candidates), data)), nil
 		}
 
