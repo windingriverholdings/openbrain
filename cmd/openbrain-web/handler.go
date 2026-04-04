@@ -51,8 +51,10 @@ func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain, embedder
 	// Mount MCP HTTP transports when enabled
 	if cfg.MCPHTTPEnabled && cfg.MCPAuthToken != "" {
 		slog.Info("mounting MCP HTTP transport", "endpoints", []string{"/mcp", "/sse/"})
-		mux.Handle("/mcp", mcphttp.NewMCPHandler(cfg.MCPAuthToken, b, embedder))
-		mux.Handle("/sse/", mcphttp.NewSSEHandler(cfg.MCPAuthToken, b, embedder))
+		mux.Handle("/mcp", mcphttp.NewMCPHandler(cfg.MCPAuthToken, cfg.MCPServerName, cfg.MCPServerVersion, b, embedder))
+		mux.Handle("/sse/", mcphttp.NewSSEHandler(cfg.MCPAuthToken, cfg.MCPServerName, cfg.MCPServerVersion, b, embedder))
+	} else if cfg.MCPHTTPEnabled {
+		slog.Warn("MCP HTTP transport enabled but OPENBRAIN_MCP_AUTH_TOKEN is empty; transport NOT mounted")
 	}
 
 	srv := &http.Server{Addr: cfg.WebAddr(), Handler: mux}

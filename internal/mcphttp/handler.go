@@ -16,7 +16,11 @@ import (
 // BearerAuth wraps an http.Handler with bearer token authentication.
 // Requests without a valid "Authorization: Bearer <token>" header
 // receive a 401 Unauthorized response.
+// Panics if token is empty — an empty token would authenticate every request.
 func BearerAuth(token string, next http.Handler) http.Handler {
+	if token == "" {
+		panic("mcphttp.BearerAuth: token must not be empty")
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
@@ -39,17 +43,25 @@ func BearerAuth(token string, next http.Handler) http.Handler {
 	})
 }
 
-// newMCPServer creates a configured MCP server with all OpenBrain tools registered.
-func newMCPServer(b *brain.Brain, embedder embeddings.Embedder) *server.MCPServer {
-	s := server.NewMCPServer("openbrain", "0.1.0")
-	mcptools.RegisterTools(s, b, embedder)
+// newMCPServer creates a configured MCP server for HTTP transport.
+// The ingest_document tool is excluded because it reads the local filesystem
+// and must not be exposed over the network.
+// Panics if b is nil — the HTTP transport requires a live Brain.
+func newMCPServer(name, version string, b *brain.Brain, embedder embeddings.Embedder) *server.MCPServer {
+	if b == nil {
+		panic("mcphttp.newMCPServer: brain must not be nil for HTTP transport")
+	}
+	s := server.NewMCPServer(name, version)
+	mcptools.RegisterToolsWithOpts(s, b, embedder, mcptools.RegisterOpts{
+		ExcludeIngest: true,
+	})
 	return s
 }
 
 // NewMCPHandler returns an http.Handler for the Streamable HTTP MCP transport,
 // wrapped with bearer token authentication. Mount at "/mcp".
-func NewMCPHandler(token string, b *brain.Brain, embedder embeddings.Embedder) http.Handler {
-	mcpSrv := newMCPServer(b, embedder)
+func NewMCPHandler(token, name, version string, b *brain.Brain, embedder embeddings.Embedder) http.Handler {
+	mcpSrv := newMCPServer(name, version, b, embedder)
 	transport := server.NewStreamableHTTPServer(mcpSrv)
 	return BearerAuth(token, transport)
 }
@@ -59,8 +71,8 @@ func NewMCPHandler(token string, b *brain.Brain, embedder embeddings.Embedder) h
 // The SSE server registers two internal endpoints:
 //   - /sse/sse — the SSE stream endpoint
 //   - /sse/message — the message POST endpoint
-func NewSSEHandler(token string, b *brain.Brain, embedder embeddings.Embedder) http.Handler {
-	mcpSrv := newMCPServer(b, embedder)
+func NewSSEHandler(token, name, version string, b *brain.Brain, embedder embeddings.Embedder) http.Handler {
+	mcpSrv := newMCPServer(name, version, b, embedder)
 	sseTransport := server.NewSSEServer(mcpSrv,
 		server.WithStaticBasePath("/sse"),
 	)

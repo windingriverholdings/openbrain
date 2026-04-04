@@ -34,20 +34,35 @@ var extractFunc = func(ctx context.Context, text string) ([]extract.Candidate, e
 	return extract.ExtractThoughts(ctx, text)
 }
 
+// RegisterOpts controls which tools are registered on the MCP server.
+type RegisterOpts struct {
+	// ExcludeIngest skips the ingest_document tool. This MUST be true
+	// when the MCP server is exposed over HTTP to prevent remote filesystem reads.
+	ExcludeIngest bool
+}
+
 // RegisterTools adds all OpenBrain tools to the given MCP server.
-// Both b and embedder may be nil for testing tool registration.
+// Both b and embedder may be nil for testing tool registration only.
 func RegisterTools(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embedder) {
+	RegisterToolsWithOpts(s, b, embedder, RegisterOpts{})
+}
+
+// RegisterToolsWithOpts adds OpenBrain tools to the given MCP server,
+// respecting the provided options to exclude certain tools.
+func RegisterToolsWithOpts(s *server.MCPServer, b *brain.Brain, embedder embeddings.Embedder, opts RegisterOpts) {
 	cfg := config.Get()
 
-	s.AddTool(
-		mcp.NewTool("ingest_document",
-			mcp.WithDescription("Ingest a document (PDF, DOCX, or image via OCR) into OpenBrain. Extracts text and optionally auto-captures as thoughts."),
-			mcp.WithString("file_path", mcp.Required(), mcp.Description("Absolute path to the document file")),
-			mcp.WithString("source", mcp.Description("Source identifier for captured thoughts")),
-			mcp.WithBoolean("auto_capture", mcp.Description("Auto-capture extracted text as thoughts (default: true)")),
-		),
-		mcpIngestDocument(b, cfg),
-	)
+	if !opts.ExcludeIngest {
+		s.AddTool(
+			mcp.NewTool("ingest_document",
+				mcp.WithDescription("Ingest a document (PDF, DOCX, or image via OCR) into OpenBrain. Extracts text and optionally auto-captures as thoughts."),
+				mcp.WithString("file_path", mcp.Required(), mcp.Description("Absolute path to the document file")),
+				mcp.WithString("source", mcp.Description("Source identifier for captured thoughts")),
+				mcp.WithBoolean("auto_capture", mcp.Description("Auto-capture extracted text as thoughts (default: true)")),
+			),
+			mcpIngestDocument(b, cfg),
+		)
+	}
 
 	s.AddTool(
 		mcp.NewTool("capture_thought",

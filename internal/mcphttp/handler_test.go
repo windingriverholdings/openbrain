@@ -7,7 +7,6 @@ import (
 
 	"github.com/craig8/openbrain/internal/mcphttp"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestBearerAuthMiddleware_RejectsUnauthenticated(t *testing.T) {
@@ -69,12 +68,24 @@ func TestBearerAuthMiddleware_RejectsMalformedHeader(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
-func TestNewMCPHandler_ReturnsHandler(t *testing.T) {
-	handler := mcphttp.NewMCPHandler("test-token", nil, nil)
-	require.NotNil(t, handler, "NewMCPHandler should return a non-nil handler")
+func TestNewMCPHandler_PanicsOnNilBrain(t *testing.T) {
+	assert.Panics(t, func() {
+		mcphttp.NewMCPHandler("test-token", "openbrain", "0.1.0", nil, nil)
+	}, "NewMCPHandler should panic when brain is nil")
 }
 
-func TestNewSSEHandler_ReturnsHandler(t *testing.T) {
-	handler := mcphttp.NewSSEHandler("test-token", nil, nil)
-	require.NotNil(t, handler, "NewSSEHandler should return a non-nil handler")
+func TestNewSSEHandler_PanicsOnNilBrain(t *testing.T) {
+	assert.Panics(t, func() {
+		mcphttp.NewSSEHandler("test-token", "openbrain", "0.1.0", nil, nil)
+	}, "NewSSEHandler should panic when brain is nil")
+}
+
+func TestBearerAuth_PanicsOnEmptyToken(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	assert.Panics(t, func() {
+		mcphttp.BearerAuth("", inner)
+	}, "BearerAuth should panic when token is empty")
 }
