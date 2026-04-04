@@ -51,6 +51,11 @@ type Config struct {
 	MCPHTTPEnabled   bool   `env:"OPENBRAIN_MCP_HTTP_ENABLED" envDefault:"false"`
 	MCPAuthToken     string `env:"OPENBRAIN_MCP_AUTH_TOKEN"`
 
+	// OAuth (for Claude.ai MCP connector)
+	OAuthClientID     string `env:"OPENBRAIN_OAUTH_CLIENT_ID"`
+	OAuthClientSecret string `env:"OPENBRAIN_OAUTH_CLIENT_SECRET"`
+	OAuthIssuer       string `env:"OPENBRAIN_OAUTH_ISSUER" envDefault:"https://openbrain.wr-s.net"`
+
 	// Retrieval
 	SearchTopK              int     `env:"OPENBRAIN_SEARCH_TOP_K" envDefault:"10"`
 	SearchScoreThreshold    float64 `env:"OPENBRAIN_SEARCH_SCORE_THRESHOLD" envDefault:"0.15"`
@@ -141,6 +146,30 @@ func validateMCPHTTP(c *Config) error {
 	return nil
 }
 
+// minOAuthSecretLen is the minimum acceptable length for the OAuth client secret.
+const minOAuthSecretLen = 32
+
+// validateOAuth enforces that when OAuth credentials are partially configured,
+// both client_id and client_secret are present and the secret is long enough.
+func validateOAuth(c *Config) error {
+	if !c.MCPHTTPEnabled {
+		return nil
+	}
+	if c.OAuthClientID == "" && c.OAuthClientSecret == "" {
+		return nil
+	}
+	if c.OAuthClientID == "" {
+		return fmt.Errorf("OPENBRAIN_OAUTH_CLIENT_ID is required when OPENBRAIN_OAUTH_CLIENT_SECRET is set")
+	}
+	if c.OAuthClientSecret == "" {
+		return fmt.Errorf("OPENBRAIN_OAUTH_CLIENT_SECRET is required when OPENBRAIN_OAUTH_CLIENT_ID is set")
+	}
+	if len(c.OAuthClientSecret) < minOAuthSecretLen {
+		return fmt.Errorf("OPENBRAIN_OAUTH_CLIENT_SECRET must be at least %d characters (got %d)", minOAuthSecretLen, len(c.OAuthClientSecret))
+	}
+	return nil
+}
+
 // Load reads .env and parses environment variables into a Config.
 // Each call creates a fresh Config — the caller owns the result.
 func Load() (*Config, error) {
@@ -156,6 +185,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if err := validateMCPHTTP(c); err != nil {
+		return nil, err
+	}
+	if err := validateOAuth(c); err != nil {
 		return nil, err
 	}
 	return c, nil

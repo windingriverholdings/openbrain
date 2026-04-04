@@ -90,6 +90,28 @@ func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain, embedder
 		slog.Info("mounting MCP HTTP transport", "endpoints", []string{"/mcp", "/sse/"})
 		mux.Handle("/mcp", mcphttp.NewMCPHandler(cfg.MCPAuthToken, cfg.MCPServerName, cfg.MCPServerVersion, b, embedder))
 		mux.Handle("/sse/", mcphttp.NewSSEHandler(cfg.MCPAuthToken, cfg.MCPServerName, cfg.MCPServerVersion, b, embedder))
+
+		// Mount OAuth endpoints when client credentials are configured.
+		// These enable Claude.ai's MCP connector to obtain a bearer token
+		// via the OAuth 2.0 client_credentials grant.
+		if cfg.OAuthClientID != "" && cfg.OAuthClientSecret != "" {
+			slog.Info("mounting OAuth 2.0 endpoints",
+				"endpoints", []string{
+					"/.well-known/oauth-authorization-server",
+					"/.well-known/oauth-protected-resource",
+					"/oauth/token",
+				})
+			mux.HandleFunc("/.well-known/oauth-authorization-server",
+				mcphttp.OAuthMetadataHandler(cfg.OAuthIssuer))
+			mux.HandleFunc("/.well-known/oauth-protected-resource",
+				mcphttp.ProtectedResourceHandler(cfg.OAuthIssuer))
+			// Token endpoint: rate-limited aggressively (5 req/min = 0.083 rps, burst 3),
+			// no bearer auth (this IS the auth endpoint).
+			mux.Handle("/oauth/token",
+				mcphttp.SecureHeaders(
+					mcphttp.RateLimit(0.083, 3,
+						mcphttp.OAuthTokenHandler(cfg.OAuthClientID, cfg.OAuthClientSecret, cfg.MCPAuthToken))))
+		}
 	} else if cfg.MCPHTTPEnabled {
 		slog.Warn("MCP HTTP transport enabled but OPENBRAIN_MCP_AUTH_TOKEN is empty; transport NOT mounted")
 	}
