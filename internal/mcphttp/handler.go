@@ -69,11 +69,12 @@ const mcpBurstSize = 10
 func NewMCPHandler(token, name, version string, b *brain.Brain, embedder embeddings.Embedder) http.Handler {
 	mcpSrv := newMCPServer(name, version, b, embedder)
 	transport := server.NewStreamableHTTPServer(mcpSrv)
-	return RateLimit(mcpRequestsPerSecond, mcpBurstSize, BearerAuth(token, transport))
+	return SecureHeaders(RateLimit(mcpRequestsPerSecond, mcpBurstSize, BearerAuth(token, transport)))
 }
 
 // NewSSEHandler returns an http.Handler for the SSE MCP transport,
-// wrapped with rate limiting and bearer token authentication. Mount at "/sse/".
+// wrapped with security headers, rate limiting, and bearer token authentication.
+// Mount at "/sse/".
 // The SSE server registers two internal endpoints:
 //   - /sse/sse — the SSE stream endpoint
 //   - /sse/message — the message POST endpoint
@@ -82,5 +83,5 @@ func NewSSEHandler(token, name, version string, b *brain.Brain, embedder embeddi
 	sseTransport := server.NewSSEServer(mcpSrv,
 		server.WithStaticBasePath("/sse"),
 	)
-	return RateLimit(mcpRequestsPerSecond, mcpBurstSize, BearerAuth(token, sseTransport))
+	return SecureHeaders(RateLimit(mcpRequestsPerSecond, mcpBurstSize, BearerAuth(token, sseTransport)))
 }
