@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/dslipak/pdf v0.0.2
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/fumiama/go-docx v0.0.0-20250506085032-0c30fd09304b
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.7.4
@@ -12,11 +13,11 @@ require (
 	github.com/mark3labs/mcp-go v0.30.0
 	github.com/otiai10/gosseract/v2 v2.4.1
 	github.com/stretchr/testify v1.10.0
+	golang.org/x/time v0.15.0
 )
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fumiama/imgsz v0.0.2 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

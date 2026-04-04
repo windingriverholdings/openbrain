@@ -111,6 +111,67 @@ func TestMarkitdownPathValidation_AcceptsValid(t *testing.T) {
 	}
 }
 
+func TestMCPHTTPEnabledDefault(t *testing.T) {
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.False(t, cfg.MCPHTTPEnabled, "MCPHTTPEnabled should default to false")
+}
+
+func TestMCPHTTPEnabledFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_MCP_HTTP_ENABLED", "true")
+	t.Setenv("OPENBRAIN_MCP_AUTH_TOKEN", "abcdefghijklmnopqrstuvwxyz123456")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.True(t, cfg.MCPHTTPEnabled)
+}
+
+func TestMCPAuthTokenFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_MCP_AUTH_TOKEN", "my-secret-token")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Equal(t, "my-secret-token", cfg.MCPAuthToken)
+}
+
+func TestMCPAuthTokenDefaultEmpty(t *testing.T) {
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Empty(t, cfg.MCPAuthToken, "MCPAuthToken should default to empty")
+}
+
+func TestMCPHTTPEnabled_RequiresToken(t *testing.T) {
+	t.Setenv("OPENBRAIN_MCP_HTTP_ENABLED", "true")
+	// No token set
+	_, err := Load()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "OPENBRAIN_MCP_AUTH_TOKEN is required")
+}
+
+func TestMCPHTTPEnabled_RejectsShortToken(t *testing.T) {
+	t.Setenv("OPENBRAIN_MCP_HTTP_ENABLED", "true")
+	t.Setenv("OPENBRAIN_MCP_AUTH_TOKEN", "too-short")
+	_, err := Load()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "at least 32 characters")
+}
+
+func TestMCPHTTPEnabled_Accepts32CharToken(t *testing.T) {
+	t.Setenv("OPENBRAIN_MCP_HTTP_ENABLED", "true")
+	t.Setenv("OPENBRAIN_MCP_AUTH_TOKEN", "abcdefghijklmnopqrstuvwxyz123456")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.True(t, cfg.MCPHTTPEnabled)
+	assert.Equal(t, "abcdefghijklmnopqrstuvwxyz123456", cfg.MCPAuthToken)
+}
+
+func TestMCPHTTPDisabled_AllowsAnyToken(t *testing.T) {
+	// When MCP HTTP is disabled, short/empty tokens are fine
+	t.Setenv("OPENBRAIN_MCP_HTTP_ENABLED", "false")
+	t.Setenv("OPENBRAIN_MCP_AUTH_TOKEN", "short")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.False(t, cfg.MCPHTTPEnabled)
+}
+
 func TestWatchDirsFromEnv(t *testing.T) {
 	t.Setenv("OPENBRAIN_WATCH_DIRS", "/tmp/docs,/tmp/notes")
 	cfg, err := Load()

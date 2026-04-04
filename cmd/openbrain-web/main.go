@@ -32,7 +32,7 @@ func main() {
 	b := brain.New(pool, embedder, cfg)
 
 	slog.Info("starting web server", "addr", cfg.WebAddr())
-	if err := serveHTTP(ctx, cfg, b); err != nil {
+	if err := serveHTTP(ctx, cfg, b, embedder); err != nil {
 		slog.Error("web server failed", "error", err)
 		os.Exit(1)
 	}

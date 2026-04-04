@@ -48,6 +48,8 @@ type Config struct {
 	// MCP
 	MCPServerName    string `env:"OPENBRAIN_MCP_SERVER_NAME" envDefault:"openbrain"`
 	MCPServerVersion string `env:"OPENBRAIN_MCP_SERVER_VERSION" envDefault:"0.1.0"`
+	MCPHTTPEnabled   bool   `env:"OPENBRAIN_MCP_HTTP_ENABLED" envDefault:"false"`
+	MCPAuthToken     string `env:"OPENBRAIN_MCP_AUTH_TOKEN"`
 
 	// Retrieval
 	SearchTopK              int     `env:"OPENBRAIN_SEARCH_TOP_K" envDefault:"10"`
@@ -64,8 +66,9 @@ type Config struct {
 	SlackAllowedUserID string `env:"OPENBRAIN_SLACK_ALLOWED_USER_ID"`
 
 	// Web UI
-	WebHost string `env:"OPENBRAIN_WEB_HOST" envDefault:"127.0.0.1"`
-	WebPort int    `env:"OPENBRAIN_WEB_PORT" envDefault:"10203"`
+	WebHost           string `env:"OPENBRAIN_WEB_HOST" envDefault:"127.0.0.1"`
+	WebPort           int    `env:"OPENBRAIN_WEB_PORT" envDefault:"10203"`
+	WebAllowedOrigins string `env:"OPENBRAIN_WEB_ALLOWED_ORIGINS"` // comma-separated list of allowed WebSocket origins
 
 	// Document ingestion
 	IngestDir          string `env:"OPENBRAIN_INGEST_DIR"`
@@ -120,6 +123,24 @@ func validateMarkitdownPath(p string) error {
 	return nil
 }
 
+// minMCPAuthTokenLen is the minimum acceptable length for the MCP auth token.
+const minMCPAuthTokenLen = 32
+
+// validateMCPHTTP enforces that when MCP HTTP is enabled, a sufficiently
+// strong auth token is configured. Returns an error if validation fails.
+func validateMCPHTTP(c *Config) error {
+	if !c.MCPHTTPEnabled {
+		return nil
+	}
+	if c.MCPAuthToken == "" {
+		return fmt.Errorf("OPENBRAIN_MCP_AUTH_TOKEN is required when OPENBRAIN_MCP_HTTP_ENABLED=true")
+	}
+	if len(c.MCPAuthToken) < minMCPAuthTokenLen {
+		return fmt.Errorf("OPENBRAIN_MCP_AUTH_TOKEN must be at least %d characters when OPENBRAIN_MCP_HTTP_ENABLED=true (got %d)", minMCPAuthTokenLen, len(c.MCPAuthToken))
+	}
+	return nil
+}
+
 // Load reads .env and parses environment variables into a Config.
 // Each call creates a fresh Config — the caller owns the result.
 func Load() (*Config, error) {
@@ -132,6 +153,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid OPENBRAIN_TESSERACT_LANGS %q: must match pattern lang(+lang)* where lang is 3 lowercase letters", c.TesseractLangs)
 	}
 	if err := validateMarkitdownPath(c.MarkitdownPath); err != nil {
+		return nil, err
+	}
+	if err := validateMCPHTTP(c); err != nil {
 		return nil, err
 	}
 	return c, nil
