@@ -18,10 +18,13 @@ const minOAuthSecretLen = 32
 // returned by the /.well-known/oauth-authorization-server endpoint.
 type authServerMetadata struct {
 	Issuer                            string   `json:"issuer"`
+	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
 	TokenEndpoint                     string   `json:"token_endpoint"`
+	RegistrationEndpoint              string   `json:"registration_endpoint"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
+	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
 }
 
 // protectedResourceMetadata is the OAuth Protected Resource metadata
@@ -50,10 +53,13 @@ type oauthErrorResponse struct {
 func OAuthMetadataHandler(issuer string) http.HandlerFunc {
 	meta := authServerMetadata{
 		Issuer:                            issuer,
-		TokenEndpoint:                     issuer + "/oauth/token",
-		TokenEndpointAuthMethodsSupported: []string{"client_secret_post"},
-		GrantTypesSupported:               []string{"client_credentials"},
-		ResponseTypesSupported:            []string{"token"},
+		AuthorizationEndpoint:             issuer + "/authorize",
+		TokenEndpoint:                     issuer + "/token",
+		RegistrationEndpoint:              issuer + "/register",
+		TokenEndpointAuthMethodsSupported: []string{"none", "client_secret_post"},
+		GrantTypesSupported:               []string{"authorization_code", "client_credentials"},
+		ResponseTypesSupported:            []string{"code"},
+		CodeChallengeMethodsSupported:     []string{"S256"},
 	}
 
 	payload, err := json.Marshal(meta)
