@@ -58,16 +58,22 @@ func newMCPServer(name, version string, b *brain.Brain, embedder embeddings.Embe
 	return s
 }
 
+// mcpRequestsPerSecond is the per-IP rate limit for authenticated MCP requests.
+const mcpRequestsPerSecond = 1.0 // 60 per minute
+
+// mcpBurstSize is the maximum burst for the MCP rate limiter.
+const mcpBurstSize = 10
+
 // NewMCPHandler returns an http.Handler for the Streamable HTTP MCP transport,
-// wrapped with bearer token authentication. Mount at "/mcp".
+// wrapped with rate limiting and bearer token authentication. Mount at "/mcp".
 func NewMCPHandler(token, name, version string, b *brain.Brain, embedder embeddings.Embedder) http.Handler {
 	mcpSrv := newMCPServer(name, version, b, embedder)
 	transport := server.NewStreamableHTTPServer(mcpSrv)
-	return BearerAuth(token, transport)
+	return RateLimit(mcpRequestsPerSecond, mcpBurstSize, BearerAuth(token, transport))
 }
 
 // NewSSEHandler returns an http.Handler for the SSE MCP transport,
-// wrapped with bearer token authentication. Mount at "/sse/".
+// wrapped with rate limiting and bearer token authentication. Mount at "/sse/".
 // The SSE server registers two internal endpoints:
 //   - /sse/sse — the SSE stream endpoint
 //   - /sse/message — the message POST endpoint
@@ -76,5 +82,5 @@ func NewSSEHandler(token, name, version string, b *brain.Brain, embedder embeddi
 	sseTransport := server.NewSSEServer(mcpSrv,
 		server.WithStaticBasePath("/sse"),
 	)
-	return BearerAuth(token, sseTransport)
+	return RateLimit(mcpRequestsPerSecond, mcpBurstSize, BearerAuth(token, sseTransport))
 }
