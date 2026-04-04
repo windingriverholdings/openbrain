@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/websocket"
 
@@ -22,11 +24,44 @@ import (
 //go:embed static
 var staticFS embed.FS
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// Local-only server — allow all origins.
-		return true
-	},
+// newUpgrader creates a WebSocket upgrader with origin validation.
+// If allowedOrigins is empty, only same-origin requests are allowed.
+func newUpgrader(allowedOrigins string) websocket.Upgrader {
+	allowed := parseAllowedOrigins(allowedOrigins)
+	return websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true // no Origin header — same-origin or non-browser client
+			}
+			if len(allowed) == 0 {
+				// Default: only allow if origin matches the Host header
+				return origin == "http://"+r.Host || origin == "https://"+r.Host
+			}
+			for _, a := range allowed {
+				if strings.EqualFold(origin, a) {
+					return true
+				}
+			}
+			return false
+		},
+	}
+}
+
+// parseAllowedOrigins splits a comma-separated origin list into a slice.
+func parseAllowedOrigins(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain, embedder embeddings.Embedder) error {
@@ -46,7 +81,9 @@ func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain, embedder
 	mux.HandleFunc("/api/capture", apiCapture(b))
 	mux.HandleFunc("/api/stats", apiStats(b))
 	mux.HandleFunc("/api/review", apiReview(b))
-	mux.HandleFunc("/ws", wsHandler(b))
+
+	upgrader := newUpgrader(cfg.WebAllowedOrigins)
+	mux.HandleFunc("/ws", wsHandler(b, upgrader, cfg.MCPAuthToken))
 
 	// Mount MCP HTTP transports when enabled
 	if cfg.MCPHTTPEnabled && cfg.MCPAuthToken != "" {
@@ -169,8 +206,19 @@ type wsResponse struct {
 	Response string `json:"response"`
 }
 
-func wsHandler(b *brain.Brain) http.HandlerFunc {
+func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// When an auth token is configured, require it via query param.
+		// WebSocket connections cannot send custom headers from browsers,
+		// so the token is passed as ?token=<value>.
+		if authToken != "" {
+			qToken := r.URL.Query().Get("token")
+			if subtle.ConstantTimeCompare([]byte(qToken), []byte(authToken)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			slog.Error("websocket upgrade failed", "error", err)
