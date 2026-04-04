@@ -113,16 +113,18 @@ func mcpBulkImport(b *brain.Brain) server.ToolHandlerFunc {
 		}
 		source := stringArg(args, "source", "import")
 
-		var imported int
+		var imported, skipped int
 		var errs []string
 		for _, t := range thoughts {
 			obj, ok := t.(map[string]any)
 			if !ok {
+				skipped++
 				continue
 			}
 
 			content, _ := obj["content"].(string)
 			if content == "" {
+				skipped++
 				continue
 			}
 
@@ -146,7 +148,7 @@ func mcpBulkImport(b *brain.Brain) server.ToolHandlerFunc {
 			imported++
 		}
 
-		result := fmt.Sprintf("Imported %d/%d thoughts", imported, len(thoughts))
+		result := fmt.Sprintf("Imported %d/%d thoughts (%d skipped, %d errors)", imported, len(thoughts), skipped, len(errs))
 		if len(errs) > 0 {
 			result += fmt.Sprintf("\nErrors: %s", strings.Join(errs, "; "))
 		}
