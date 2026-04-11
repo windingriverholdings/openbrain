@@ -105,6 +105,63 @@ func TestWsResponse_JSONFields(t *testing.T) {
 	assert.Nil(t, raw["response"], "JSON must NOT have old 'response' field")
 }
 
+func TestWsHandler_NoToken_AllowsConnection(t *testing.T) {
+	b := brain.New(nil, nil, nil)
+	upgrader := newUpgrader("")
+	handler := wsHandler(b, upgrader, "")
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err, "should connect without token when authToken is empty")
+	conn.Close()
+}
+
+func TestWsHandler_WithToken_RejectsWithout(t *testing.T) {
+	b := brain.New(nil, nil, nil)
+	upgrader := newUpgrader("")
+	handler := wsHandler(b, upgrader, "my-secret-ws-token-for-testing-1234")
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.Error(t, err, "should reject connection without token")
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestWsHandler_WithToken_AcceptsCorrect(t *testing.T) {
+	b := brain.New(nil, nil, nil)
+	upgrader := newUpgrader("")
+	token := "my-secret-ws-token-for-testing-1234"
+	handler := wsHandler(b, upgrader, token)
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?token=" + token
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err, "should accept connection with correct token")
+	conn.Close()
+}
+
+func TestWsHandler_WithToken_RejectsWrong(t *testing.T) {
+	b := brain.New(nil, nil, nil)
+	upgrader := newUpgrader("")
+	handler := wsHandler(b, upgrader, "correct-token-abcdefghijklmnop")
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?token=wrong-token"
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.Error(t, err, "should reject connection with wrong token")
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
 func TestWsHandler_ResponseFormat(t *testing.T) {
 	// Create a brain with nil deps — Help intent doesn't use DB or embedder
 	b := brain.New(nil, nil, nil)
