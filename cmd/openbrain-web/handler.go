@@ -245,7 +245,9 @@ type wsMessage struct {
 }
 
 type wsResponse struct {
-	Response string `json:"response"`
+	Content     string `json:"content"`
+	Intent      string `json:"intent"`
+	ThoughtType string `json:"thought_type"`
 }
 
 func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) http.HandlerFunc {
@@ -283,7 +285,12 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 				result = fmt.Sprintf("Error: %v", err)
 			}
 
-			if err := conn.WriteJSON(wsResponse{Response: result}); err != nil {
+			resp := wsResponse{
+				Content:     result,
+				Intent:      string(parsed.Intent),
+				ThoughtType: parsed.ThoughtType,
+			}
+			if err := conn.WriteJSON(resp); err != nil {
 				slog.Error("websocket write error", "error", err)
 				return
 			}
