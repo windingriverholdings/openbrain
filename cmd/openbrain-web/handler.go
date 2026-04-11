@@ -83,7 +83,7 @@ func serveHTTP(ctx context.Context, cfg *config.Config, b *brain.Brain, embedder
 	mux.HandleFunc("/api/review", apiReview(b))
 
 	upgrader := newUpgrader(cfg.WebAllowedOrigins)
-	mux.HandleFunc("/ws", wsHandler(b, upgrader, cfg.MCPAuthToken))
+	mux.HandleFunc("/ws", wsHandler(b, upgrader, cfg.WebWSToken))
 
 	// Mount MCP HTTP transports when enabled
 	if cfg.MCPHTTPEnabled && cfg.MCPAuthToken != "" {

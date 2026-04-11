@@ -74,6 +74,7 @@ type Config struct {
 	WebHost           string `env:"OPENBRAIN_WEB_HOST" envDefault:"127.0.0.1"`
 	WebPort           int    `env:"OPENBRAIN_WEB_PORT" envDefault:"10203"`
 	WebAllowedOrigins string `env:"OPENBRAIN_WEB_ALLOWED_ORIGINS"` // comma-separated list of allowed WebSocket origins
+	WebWSToken        string `env:"OPENBRAIN_WEB_WS_TOKEN"`        // optional auth token for /ws; when empty, WebSocket is open
 
 	// Document ingestion
 	IngestDir          string `env:"OPENBRAIN_INGEST_DIR"`
