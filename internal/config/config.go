@@ -74,6 +74,7 @@ type Config struct {
 	WebHost           string `env:"OPENBRAIN_WEB_HOST" envDefault:"127.0.0.1"`
 	WebPort           int    `env:"OPENBRAIN_WEB_PORT" envDefault:"10203"`
 	WebAllowedOrigins string `env:"OPENBRAIN_WEB_ALLOWED_ORIGINS"` // comma-separated list of allowed WebSocket origins
+	WebWSToken        string `env:"OPENBRAIN_WEB_WS_TOKEN"`        // optional auth token for /ws; when empty, WebSocket is open
 
 	// Document ingestion
 	IngestDir          string `env:"OPENBRAIN_INGEST_DIR"`
@@ -128,8 +129,12 @@ func validateMarkitdownPath(p string) error {
 	return nil
 }
 
-// minMCPAuthTokenLen is the minimum acceptable length for the MCP auth token.
-const minMCPAuthTokenLen = 32
+// minAuthTokenLen is the minimum acceptable length for auth tokens
+// (MCP HTTP, WebSocket, etc.).
+const minAuthTokenLen = 32
+
+// minMCPAuthTokenLen is kept as an alias for backward compatibility.
+const minMCPAuthTokenLen = minAuthTokenLen
 
 // validateMCPHTTP enforces that when MCP HTTP is enabled, a sufficiently
 // strong auth token is configured. Returns an error if validation fails.
@@ -142,6 +147,19 @@ func validateMCPHTTP(c *Config) error {
 	}
 	if len(c.MCPAuthToken) < minMCPAuthTokenLen {
 		return fmt.Errorf("OPENBRAIN_MCP_AUTH_TOKEN must be at least %d characters when OPENBRAIN_MCP_HTTP_ENABLED=true (got %d)", minMCPAuthTokenLen, len(c.MCPAuthToken))
+	}
+	return nil
+}
+
+// validateWebWSToken checks that when a WebSocket auth token is provided,
+// it meets the minimum length requirement. An empty token is allowed
+// (WebSocket runs without authentication).
+func validateWebWSToken(c *Config) error {
+	if c.WebWSToken == "" {
+		return nil
+	}
+	if len(c.WebWSToken) < minAuthTokenLen {
+		return fmt.Errorf("OPENBRAIN_WEB_WS_TOKEN must be at least %d characters (got %d)", minAuthTokenLen, len(c.WebWSToken))
 	}
 	return nil
 }
@@ -188,6 +206,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if err := validateOAuth(c); err != nil {
+		return nil, err
+	}
+	if err := validateWebWSToken(c); err != nil {
 		return nil, err
 	}
 	return c, nil

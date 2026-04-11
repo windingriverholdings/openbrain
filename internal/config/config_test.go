@@ -192,6 +192,38 @@ func TestWatchDebounceMsFromEnv(t *testing.T) {
 	assert.Equal(t, 1000, cfg.WatchDebounceMs)
 }
 
+func TestWebWSToken_EmptyAllowed(t *testing.T) {
+	// Empty token is fine — WebSocket runs without auth
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Empty(t, cfg.WebWSToken)
+}
+
+func TestWebWSToken_RejectsShortToken(t *testing.T) {
+	t.Setenv("OPENBRAIN_WEB_WS_TOKEN", "too-short")
+	_, err := Load()
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "OPENBRAIN_WEB_WS_TOKEN")
+		assert.Contains(t, err.Error(), "at least 32 characters")
+	}
+}
+
+func TestWebWSToken_Accepts32CharToken(t *testing.T) {
+	token := "abcdefghijklmnopqrstuvwxyz123456" // exactly 32
+	t.Setenv("OPENBRAIN_WEB_WS_TOKEN", token)
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Equal(t, token, cfg.WebWSToken)
+}
+
+func TestWebWSToken_AcceptsLongToken(t *testing.T) {
+	token := "abcdefghijklmnopqrstuvwxyz1234567890abcdef" // 42 chars
+	t.Setenv("OPENBRAIN_WEB_WS_TOKEN", token)
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Equal(t, token, cfg.WebWSToken)
+}
+
 func TestTesseractLangsValidation_AcceptsValid(t *testing.T) {
 	tests := []struct {
 		name  string
