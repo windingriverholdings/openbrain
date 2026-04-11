@@ -1,11 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/craig8/openbrain/internal/brain"
 )
 
 // fakeWSRequest creates a minimal HTTP request for testing CheckOrigin.
@@ -77,4 +83,59 @@ func TestNewUpgrader_WithAllowedOrigins_RejectsUnlisted(t *testing.T) {
 
 	result := upgrader.CheckOrigin(fakeWSRequest("https://evil.com", "localhost:10203"))
 	assert.False(t, result, "should reject unlisted origin")
+}
+
+func TestWsResponse_JSONFields(t *testing.T) {
+	// The JS client expects fields: content, intent, thought_type
+	resp := wsResponse{
+		Content:     "test content",
+		Intent:      "search",
+		ThoughtType: "note",
+	}
+	data, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	var raw map[string]interface{}
+	err = json.Unmarshal(data, &raw)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test content", raw["content"], "JSON must have 'content' field")
+	assert.Equal(t, "search", raw["intent"], "JSON must have 'intent' field")
+	assert.Equal(t, "note", raw["thought_type"], "JSON must have 'thought_type' field")
+	assert.Nil(t, raw["response"], "JSON must NOT have old 'response' field")
+}
+
+func TestWsHandler_ResponseFormat(t *testing.T) {
+	// Create a brain with nil deps — Help intent doesn't use DB or embedder
+	b := brain.New(nil, nil, nil)
+
+	upgrader := newUpgrader("")
+	handler := wsHandler(b, upgrader, "")
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	defer srv.Close()
+
+	// Convert http URL to ws URL
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Send "help" — routed to Help intent, no DB needed
+	err = conn.WriteJSON(wsMessage{Message: "help"})
+	require.NoError(t, err)
+
+	_, rawMsg, err := conn.ReadMessage()
+	require.NoError(t, err)
+
+	var raw map[string]interface{}
+	err = json.Unmarshal(rawMsg, &raw)
+	require.NoError(t, err)
+
+	// The JS client reads data.content, data.intent, data.thought_type
+	assert.NotEmpty(t, raw["content"], "response must include 'content' field")
+	assert.NotNil(t, raw["intent"], "response must include 'intent' field")
+	assert.NotNil(t, raw["thought_type"], "response must include 'thought_type' field")
+	assert.Nil(t, raw["response"], "response must NOT include old 'response' field")
 }
