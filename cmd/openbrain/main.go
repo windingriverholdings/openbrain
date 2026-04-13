@@ -49,7 +49,7 @@ func main() {
 	case "stats":
 		err = cmdStats(ctx, b)
 	case "reembed":
-		err = cmdReembed(ctx, pool, embedder)
+		err = cmdReembed(ctx, pool, embedder, cfg)
 	case "import":
 		err = fmt.Errorf("import not yet implemented — use MCP bulk_import tool")
 	default:
@@ -120,14 +120,25 @@ func cmdStats(ctx context.Context, b *brain.Brain) error {
 	return nil
 }
 
-func cmdReembed(ctx context.Context, pool *pgxpool.Pool, embedder embeddings.Embedder) error {
+func cmdReembed(ctx context.Context, pool *pgxpool.Pool, embedder embeddings.Embedder, cfg *config.Config) error {
 	fmt.Println("Re-embedding all thoughts with NULL embeddings...")
-	progressFn := func(done, total int) {
-		fmt.Fprintf(os.Stderr, "\r  progress: %d/%d", done, total)
+	fmt.Println("NOTE: After migration 008, search may return degraded results until re-embedding completes.")
+	progressFn := func(processed, total int) {
+		fmt.Fprintf(os.Stderr, "\r  progress: %d/%d", processed, total)
 	}
 
-	result, err := db.ReembedAll(ctx, pool, embedder, progressFn)
+	reembedDB := db.NewReembedDB(pool)
+	result, err := db.ReembedAll(ctx, reembedDB, embedder, cfg.EmbeddingDim, progressFn)
 	if err != nil {
+		// Print partial results even on error (circuit breaker, context cancel).
+		if result != nil {
+			fmt.Fprintf(os.Stderr, "\n")
+			fmt.Printf("Re-embed aborted: %d total, %d succeeded, %d failed\n",
+				result.Total, result.Succeeded, result.Failed)
+			for _, e := range result.Errors {
+				fmt.Fprintf(os.Stderr, "  error: %s\n", e)
+			}
+		}
 		return fmt.Errorf("reembed: %w", err)
 	}
 
@@ -137,7 +148,9 @@ func cmdReembed(ctx context.Context, pool *pgxpool.Pool, embedder embeddings.Emb
 	for _, e := range result.Errors {
 		fmt.Fprintf(os.Stderr, "  error: %s\n", e)
 	}
-	return nil
+
+	// Exit non-zero if any thoughts failed.
+	return db.CheckReembedResult(result)
 }
 
 func printUsage() {

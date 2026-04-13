@@ -1,3 +1,18 @@
+-- ============================================================================
+-- WARNING: DESTRUCTIVE MIGRATION — READ BEFORE RUNNING
+-- ============================================================================
+--
+-- This migration NULLs ALL existing embeddings. There is no rollback path
+-- that restores the original embedding data. Before running:
+--
+--   1. Take a backup:  pg_dump -Fc openbrain > openbrain_pre_008.dump
+--   2. Verify Ollama is running and the target model is pulled
+--   3. Plan for re-embed time (depends on thought count and Ollama speed)
+--
+-- After this migration, search will return degraded/no semantic results
+-- until `openbrain reembed` completes. Keyword search still works.
+-- ============================================================================
+--
 -- OpenBrain: OB-024 — Remove dimension constraint from embedding column
 -- This migration:
 --   1. NULLs all existing embeddings (they must be re-embedded with the active model)
