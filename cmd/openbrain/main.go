@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/craig8/openbrain/internal/brain"
 	"github.com/craig8/openbrain/internal/config"
 	"github.com/craig8/openbrain/internal/db"
@@ -46,6 +48,8 @@ func main() {
 		err = cmdReview(ctx, b)
 	case "stats":
 		err = cmdStats(ctx, b)
+	case "reembed":
+		err = cmdReembed(ctx, pool, embedder)
 	case "import":
 		err = fmt.Errorf("import not yet implemented — use MCP bulk_import tool")
 	default:
@@ -116,6 +120,26 @@ func cmdStats(ctx context.Context, b *brain.Brain) error {
 	return nil
 }
 
+func cmdReembed(ctx context.Context, pool *pgxpool.Pool, embedder embeddings.Embedder) error {
+	fmt.Println("Re-embedding all thoughts with NULL embeddings...")
+	progressFn := func(done, total int) {
+		fmt.Fprintf(os.Stderr, "\r  progress: %d/%d", done, total)
+	}
+
+	result, err := db.ReembedAll(ctx, pool, embedder, progressFn)
+	if err != nil {
+		return fmt.Errorf("reembed: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Printf("Re-embed complete: %d total, %d succeeded, %d failed\n",
+		result.Total, result.Succeeded, result.Failed)
+	for _, e := range result.Errors {
+		fmt.Fprintf(os.Stderr, "  error: %s\n", e)
+	}
+	return nil
+}
+
 func printUsage() {
 	fmt.Println(`OpenBrain CLI — personal knowledge base
 
@@ -124,6 +148,7 @@ Usage:
   openbrain search <query>     Search for thoughts
   openbrain review             Weekly review
   openbrain stats              Show statistics
+  openbrain reembed            Re-embed all thoughts with NULL embeddings
   openbrain import <file>      Import from JSON file
   openbrain <text>             Auto-classify and dispatch`)
 }

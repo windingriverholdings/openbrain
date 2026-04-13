@@ -42,8 +42,8 @@ type Config struct {
 	DBPassword string `env:"OPENBRAIN_DB_PASSWORD" envDefault:"openbrain"`
 
 	// Embedding
-	EmbeddingModel string `env:"OPENBRAIN_EMBEDDING_MODEL" envDefault:"all-minilm"`
-	EmbeddingDim   int    `env:"OPENBRAIN_EMBEDDING_DIM" envDefault:"384"`
+	EmbeddingModel string `env:"OPENBRAIN_EMBEDDING_MODEL" envDefault:"nomic-embed-text"`
+	EmbeddingDim   int    `env:"OPENBRAIN_EMBEDDING_DIM" envDefault:"768"`
 
 	// MCP
 	MCPServerName    string `env:"OPENBRAIN_MCP_SERVER_NAME" envDefault:"openbrain"`
