@@ -1,20 +1,25 @@
--- OpenBrain: OB-024 — Upgrade embedding from all-minilm (384d) to nomic-embed-text (768d)
+-- OpenBrain: OB-024 — Remove dimension constraint from embedding column
 -- This migration:
---   1. NULLs all existing 384-dim embeddings (they must be re-embedded)
---   2. ALTERs the embedding column from 384-dim to vector(768)
---   3. Recreates hybrid_search() with vector(768) parameter type
+--   1. NULLs all existing embeddings (they must be re-embedded with the active model)
+--   2. ALTERs the embedding column to untyped vector (no dimension constraint)
+--   3. Recreates hybrid_search() with untyped vector parameter
+--
+-- After this migration, swapping embedding models is config-only:
+--   1. ollama pull <new-model>
+--   2. Update .env: OPENBRAIN_EMBEDDING_MODEL and OPENBRAIN_EMBEDDING_DIM
+--   3. Run `openbrain reembed`
 
--- Step 1: NULL out existing embeddings — they are 384-dim and incompatible
--- with the new 768-dim model. Use `openbrain reembed` to regenerate.
+-- Step 1: NULL out existing embeddings — they may be incompatible
+-- with the active model. Use `openbrain reembed` to regenerate.
 UPDATE thoughts SET embedding = NULL WHERE embedding IS NOT NULL;
 
--- Step 2: ALTER the embedding column to vector(768)
-ALTER TABLE thoughts ALTER COLUMN embedding TYPE vector(768);
+-- Step 2: ALTER the embedding column to untyped vector (model-agnostic)
+ALTER TABLE thoughts ALTER COLUMN embedding TYPE vector;
 
--- Step 3: Recreate hybrid_search() with vector(768) parameter
+-- Step 3: Recreate hybrid_search() with untyped vector parameter
 CREATE OR REPLACE FUNCTION hybrid_search(
   query_text TEXT,
-  query_embedding vector(768),
+  query_embedding vector,
   match_count INT DEFAULT 10,
   keyword_weight FLOAT DEFAULT 0.3,
   semantic_weight FLOAT DEFAULT 0.7,
