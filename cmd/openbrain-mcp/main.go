@@ -31,7 +31,7 @@ func main() {
 	// Validate embedding config matches DB before serving.
 	configDB := db.NewPgxEmbeddingConfigDB(pool)
 	if err := db.ValidateEmbeddingConfig(ctx, configDB, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
-		slog.Error("embedding config mismatch", "error", err)
+		slog.Error("embedding config validation failed", "error", err)
 		os.Exit(1)
 	}
 

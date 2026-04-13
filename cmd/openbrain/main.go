@@ -43,7 +43,7 @@ func main() {
 	if os.Args[1] != "reembed" {
 		configDB := db.NewPgxEmbeddingConfigDB(pool)
 		if err := db.ValidateEmbeddingConfig(ctx, configDB, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
-			slog.Error("embedding config mismatch", "error", err)
+			slog.Error("embedding config validation failed", "error", err)
 			os.Exit(1)
 		}
 	}
@@ -166,7 +166,9 @@ func cmdReembed(ctx context.Context, pool *pgxpool.Pool, embedder embeddings.Emb
 		if err := configDB.UpdateEmbeddingConfig(ctx, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
 			return fmt.Errorf("reembed succeeded but failed to update embedding config: %w", err)
 		}
-		slog.Info("embedding config updated", "model", cfg.EmbeddingModel, "dim", cfg.EmbeddingDim)
+		fmt.Printf("Embedding config updated: model=%s, dim=%d\n", cfg.EmbeddingModel, cfg.EmbeddingDim)
+	} else {
+		fmt.Fprintf(os.Stderr, "Embedding config NOT updated due to %d failures — fix errors and re-run 'openbrain reembed'\n", result.Failed)
 	}
 
 	// Exit non-zero if any thoughts failed.

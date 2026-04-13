@@ -42,12 +42,15 @@ func (p *pgxEmbeddingConfigDB) GetEmbeddingConfig(ctx context.Context) (string, 
 }
 
 func (p *pgxEmbeddingConfigDB) UpdateEmbeddingConfig(ctx context.Context, model string, dim int) error {
-	_, err := p.pool.Exec(ctx,
+	ct, err := p.pool.Exec(ctx,
 		`UPDATE embedding_config SET model_name = $1, dimension = $2, updated_at = now() WHERE id = TRUE`,
 		model, dim,
 	)
 	if err != nil {
 		return fmt.Errorf("update embedding config: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("embedding_config row not found — ensure migration 009 has been applied")
 	}
 	return nil
 }

@@ -99,3 +99,17 @@ func TestUpdateEmbeddingConfig_Error(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "update failed")
 }
+
+func TestUpdateEmbeddingConfig_RowNotFound(t *testing.T) {
+	// Simulates the zero-rows-affected case from pgxEmbeddingConfigDB:
+	// when migration 009 hasn't been applied, the UPDATE matches no rows.
+	db := &mockEmbeddingConfigDB{
+		updateFn: func(model string, dim int) error {
+			return fmt.Errorf("embedding_config row not found — ensure migration 009 has been applied")
+		},
+	}
+	err := db.UpdateEmbeddingConfig(context.Background(), "nomic-embed-text", 768)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "row not found")
+	assert.Contains(t, err.Error(), "migration 009")
+}
