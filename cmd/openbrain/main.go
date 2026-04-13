@@ -37,6 +37,17 @@ func main() {
 	defer pool.Close()
 
 	embedder := embeddings.NewOllamaEmbedder(cfg)
+
+	// Validate embedding config for all subcommands except reembed
+	// (reembed IS the fix for a mismatch).
+	if os.Args[1] != "reembed" {
+		configDB := db.NewPgxEmbeddingConfigDB(pool)
+		if err := db.ValidateEmbeddingConfig(ctx, configDB, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
+			slog.Error("embedding config mismatch", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	b := brain.New(pool, embedder, cfg)
 
 	switch os.Args[1] {
@@ -147,6 +158,15 @@ func cmdReembed(ctx context.Context, pool *pgxpool.Pool, embedder embeddings.Emb
 		result.Total, result.Succeeded, result.Failed)
 	for _, e := range result.Errors {
 		fmt.Fprintf(os.Stderr, "  error: %s\n", e)
+	}
+
+	// Only update embedding config if zero failures — mixed state is unsafe.
+	if result.Failed == 0 {
+		configDB := db.NewPgxEmbeddingConfigDB(pool)
+		if err := configDB.UpdateEmbeddingConfig(ctx, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
+			return fmt.Errorf("reembed succeeded but failed to update embedding config: %w", err)
+		}
+		slog.Info("embedding config updated", "model", cfg.EmbeddingModel, "dim", cfg.EmbeddingDim)
 	}
 
 	// Exit non-zero if any thoughts failed.

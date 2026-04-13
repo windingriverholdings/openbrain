@@ -29,6 +29,14 @@ func main() {
 	defer pool.Close()
 
 	embedder := embeddings.NewOllamaEmbedder(cfg)
+
+	// Validate embedding config matches DB before serving.
+	configDB := db.NewPgxEmbeddingConfigDB(pool)
+	if err := db.ValidateEmbeddingConfig(ctx, configDB, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
+		slog.Error("embedding config mismatch", "error", err)
+		os.Exit(1)
+	}
+
 	b := brain.New(pool, embedder, cfg)
 
 	slog.Info("starting web server", "addr", cfg.WebAddr())
