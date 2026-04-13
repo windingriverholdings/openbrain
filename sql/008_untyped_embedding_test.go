@@ -57,6 +57,18 @@ func TestMigration008_RecreatesHybridSearch(t *testing.T) {
 		"migration must recreate hybrid_search function")
 }
 
+func TestMigration008_SemanticResultsExcludesNullEmbeddings(t *testing.T) {
+	data, err := os.ReadFile("008_untyped_embedding.sql")
+	require.NoError(t, err)
+	sql := string(data)
+
+	// The semantic_results CTE must filter out rows with NULL embeddings.
+	// After migration NULLs all embeddings, computing cosine distance against
+	// NULL produces undefined results and wastes query time.
+	assert.Contains(t, sql, "t.embedding IS NOT NULL",
+		"hybrid_search semantic_results CTE must exclude NULL-embedding rows")
+}
+
 func TestMigration008_NoDimensionConstrainedVector(t *testing.T) {
 	data, err := os.ReadFile("008_untyped_embedding.sql")
 	require.NoError(t, err)
