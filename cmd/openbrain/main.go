@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/craig8/openbrain/internal/brain"
 	"github.com/craig8/openbrain/internal/config"
 	"github.com/craig8/openbrain/internal/db"
@@ -35,6 +37,17 @@ func main() {
 	defer pool.Close()
 
 	embedder := embeddings.NewOllamaEmbedder(cfg)
+
+	// Validate embedding config for all subcommands except reembed
+	// (reembed IS the fix for a mismatch).
+	if os.Args[1] != "reembed" {
+		configDB := db.NewPgxEmbeddingConfigDB(pool)
+		if err := db.ValidateEmbeddingConfig(ctx, configDB, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
+			slog.Error("embedding config validation failed", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	b := brain.New(pool, embedder, cfg)
 
 	switch os.Args[1] {
@@ -46,6 +59,8 @@ func main() {
 		err = cmdReview(ctx, b)
 	case "stats":
 		err = cmdStats(ctx, b)
+	case "reembed":
+		err = cmdReembed(ctx, pool, embedder, cfg)
 	case "import":
 		err = fmt.Errorf("import not yet implemented — use MCP bulk_import tool")
 	default:
@@ -116,6 +131,50 @@ func cmdStats(ctx context.Context, b *brain.Brain) error {
 	return nil
 }
 
+func cmdReembed(ctx context.Context, pool *pgxpool.Pool, embedder embeddings.Embedder, cfg *config.Config) error {
+	fmt.Println("Re-embedding all thoughts with NULL embeddings...")
+	fmt.Println("NOTE: After migration 008, search may return degraded results until re-embedding completes.")
+	progressFn := func(processed, total int) {
+		fmt.Fprintf(os.Stderr, "\r  progress: %d/%d", processed, total)
+	}
+
+	reembedDB := db.NewReembedDB(pool)
+	result, err := db.ReembedAll(ctx, reembedDB, embedder, cfg.EmbeddingDim, progressFn)
+	if err != nil {
+		// Print partial results even on error (circuit breaker, context cancel).
+		if result != nil {
+			fmt.Fprintf(os.Stderr, "\n")
+			fmt.Printf("Re-embed aborted: %d total, %d succeeded, %d failed\n",
+				result.Total, result.Succeeded, result.Failed)
+			for _, e := range result.Errors {
+				fmt.Fprintf(os.Stderr, "  error: %s\n", e)
+			}
+		}
+		return fmt.Errorf("reembed: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Printf("Re-embed complete: %d total, %d succeeded, %d failed\n",
+		result.Total, result.Succeeded, result.Failed)
+	for _, e := range result.Errors {
+		fmt.Fprintf(os.Stderr, "  error: %s\n", e)
+	}
+
+	// Only update embedding config if zero failures — mixed state is unsafe.
+	if result.Failed == 0 {
+		configDB := db.NewPgxEmbeddingConfigDB(pool)
+		if err := configDB.UpdateEmbeddingConfig(ctx, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
+			return fmt.Errorf("reembed succeeded but failed to update embedding config: %w", err)
+		}
+		fmt.Printf("Embedding config updated: model=%s, dim=%d\n", cfg.EmbeddingModel, cfg.EmbeddingDim)
+	} else {
+		fmt.Fprintf(os.Stderr, "Embedding config NOT updated due to %d failures — fix errors and re-run 'openbrain reembed'\n", result.Failed)
+	}
+
+	// Exit non-zero if any thoughts failed.
+	return db.CheckReembedResult(result)
+}
+
 func printUsage() {
 	fmt.Println(`OpenBrain CLI — personal knowledge base
 
@@ -124,6 +183,7 @@ Usage:
   openbrain search <query>     Search for thoughts
   openbrain review             Weekly review
   openbrain stats              Show statistics
+  openbrain reembed            Re-embed all thoughts with NULL embeddings
   openbrain import <file>      Import from JSON file
   openbrain <text>             Auto-classify and dispatch`)
 }

@@ -63,6 +63,14 @@ func main() {
 
 	// Create embedder and brain
 	embedder := embeddings.NewOllamaEmbedder(cfg)
+
+	// Validate embedding config matches DB before watching.
+	configDB := db.NewPgxEmbeddingConfigDB(pool)
+	if err := db.ValidateEmbeddingConfig(ctx, configDB, cfg.EmbeddingModel, cfg.EmbeddingDim); err != nil {
+		slog.Error("embedding config validation failed", "error", err)
+		os.Exit(1)
+	}
+
 	b := brain.New(pool, embedder, cfg)
 	adapter := watcher.NewBrainAdapter(b)
 

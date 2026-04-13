@@ -1,9 +1,11 @@
 package db
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHybridSearchThoughtsSignatureAcceptsThoughtType(t *testing.T) {
@@ -88,6 +90,20 @@ func TestHybridSearchThoughts_RejectsNilEmbedding(t *testing.T) {
 
 	assert.Error(t, err, "HybridSearchThoughts must reject nil embeddings")
 	assert.Contains(t, err.Error(), "empty embedding")
+}
+
+func TestSearchThoughts_QueryExcludesNullEmbeddings(t *testing.T) {
+	// SearchThoughts must include "AND embedding IS NOT NULL" in its query
+	// so that rows with NULL embeddings (post-migration, pre-reembed) are
+	// skipped rather than producing undefined cosine distance results.
+	//
+	// We verify this by reading the source file and checking the query string.
+	data, err := os.ReadFile("search.go")
+	require.NoError(t, err)
+	src := string(data)
+
+	assert.Contains(t, src, "embedding IS NOT NULL",
+		"SearchThoughts query must exclude rows with NULL embeddings")
 }
 
 func TestHybridSearchNoDoubleThresholdFilter(t *testing.T) {

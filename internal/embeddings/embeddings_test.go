@@ -54,7 +54,11 @@ func TestEmbed_ReturnsErrorOnNilEmbedding(t *testing.T) {
 
 func TestEmbed_SucceedsWithValidEmbedding(t *testing.T) {
 	// Sanity check: valid embeddings should pass through without error.
-	expected := []float32{0.1, 0.2, 0.3}
+	// Vector must match configured dimension (384) to pass validation.
+	expected := make([]float32, 384)
+	for i := range expected {
+		expected[i] = float32(i) * 0.001
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := ollamaEmbedResponse{Embedding: expected}
 		w.Header().Set("Content-Type", "application/json")
@@ -101,14 +105,60 @@ func TestEmbed_TruncatesLargeErrorBody(t *testing.T) {
 	assert.Greater(t, xCount, 0, "Error should contain some of the response body")
 }
 
+func TestEmbed_ReturnsErrorOnDimensionMismatch(t *testing.T) {
+	// When Ollama returns an embedding with wrong dimensionality,
+	// Embed() must return a dimension mismatch error rather than
+	// silently passing bad vectors to callers.
+	wrongDimVec := []float32{0.1, 0.2, 0.3} // 3 dims, expected 384
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := ollamaEmbedResponse{Embedding: wrongDimVec}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	embedder := newTestEmbedder(srv.URL) // dim=384
+	_, err := embedder.Embed(context.Background(), "test text")
+
+	require.Error(t, err, "Embed must return an error when dimension mismatches")
+	assert.Contains(t, err.Error(), "dimension mismatch")
+	assert.Contains(t, err.Error(), "got 3")
+	assert.Contains(t, err.Error(), "expected 384")
+}
+
+func TestEmbed_SucceedsWithCorrectDimension(t *testing.T) {
+	// When Ollama returns an embedding matching the configured dimension,
+	// Embed() should succeed.
+	expected := make([]float32, 384)
+	for i := range expected {
+		expected[i] = float32(i) * 0.001
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := ollamaEmbedResponse{Embedding: expected}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	embedder := newTestEmbedder(srv.URL) // dim=384
+	result, err := embedder.Embed(context.Background(), "test text")
+
+	require.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
 func TestEmbedBatch_ReturnsErrorOnEmptyEmbedding(t *testing.T) {
 	// If any embedding in a batch comes back empty, the batch should fail.
 	callCount := 0
+	goodVec := make([]float32, 384)
+	for i := range goodVec {
+		goodVec[i] = 0.1
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var resp ollamaEmbedResponse
 		if callCount == 1 {
-			resp = ollamaEmbedResponse{Embedding: []float32{0.1, 0.2}}
+			resp = ollamaEmbedResponse{Embedding: goodVec}
 		} else {
 			resp = ollamaEmbedResponse{Embedding: []float32{}}
 		}

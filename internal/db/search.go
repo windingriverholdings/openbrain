@@ -20,7 +20,8 @@ func SearchThoughts(ctx context.Context, p *pgxpool.Pool, embedding []float32, t
 		       tags, source, created_at,
 		       1 - (embedding <=> $1::vector) AS score
 		FROM thoughts
-		WHERE is_current = TRUE`
+		WHERE is_current = TRUE
+		  AND embedding IS NOT NULL`
 
 	args := []any{VecLiteral(embedding)}
 	argN := 2
