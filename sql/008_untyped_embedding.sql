@@ -71,7 +71,8 @@ RETURNS TABLE (
       t.id,
       1 - (t.embedding <=> query_embedding) AS score
     FROM thoughts t
-    WHERE (NOT current_only OR t.is_current = TRUE)
+    WHERE t.embedding IS NOT NULL
+      AND (NOT current_only OR t.is_current = TRUE)
       AND (filter_type IS NULL OR t.thought_type = filter_type::thought_type)
     ORDER BY t.embedding <=> query_embedding
     LIMIT match_count * 3

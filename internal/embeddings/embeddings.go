@@ -85,6 +85,10 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 		return nil, fmt.Errorf("ollama returned empty embedding for model %s", e.model)
 	}
 
+	if len(result.Embedding) != e.dim {
+		return nil, fmt.Errorf("embedding dimension mismatch: got %d, expected %d", len(result.Embedding), e.dim)
+	}
+
 	return result.Embedding, nil
 }
 

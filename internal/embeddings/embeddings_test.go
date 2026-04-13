@@ -54,7 +54,11 @@ func TestEmbed_ReturnsErrorOnNilEmbedding(t *testing.T) {
 
 func TestEmbed_SucceedsWithValidEmbedding(t *testing.T) {
 	// Sanity check: valid embeddings should pass through without error.
-	expected := []float32{0.1, 0.2, 0.3}
+	// Vector must match configured dimension (384) to pass validation.
+	expected := make([]float32, 384)
+	for i := range expected {
+		expected[i] = float32(i) * 0.001
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := ollamaEmbedResponse{Embedding: expected}
 		w.Header().Set("Content-Type", "application/json")
@@ -146,11 +150,15 @@ func TestEmbed_SucceedsWithCorrectDimension(t *testing.T) {
 func TestEmbedBatch_ReturnsErrorOnEmptyEmbedding(t *testing.T) {
 	// If any embedding in a batch comes back empty, the batch should fail.
 	callCount := 0
+	goodVec := make([]float32, 384)
+	for i := range goodVec {
+		goodVec[i] = 0.1
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var resp ollamaEmbedResponse
 		if callCount == 1 {
-			resp = ollamaEmbedResponse{Embedding: []float32{0.1, 0.2}}
+			resp = ollamaEmbedResponse{Embedding: goodVec}
 		} else {
 			resp = ollamaEmbedResponse{Embedding: []float32{}}
 		}
