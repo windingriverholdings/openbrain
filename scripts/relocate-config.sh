@@ -23,7 +23,7 @@
 #      0600 so its contents stay private.
 #   3. Idempotent: if DEST already holds byte-identical content, correct
 #      mode, and correct owner, no write happens at all (matching the
-#      write_drop_in idiom in scripts/repoint-unit.sh: running this twice
+#      write_drop_in idiom in scripts/deploy-system.sh: running this twice
 #      produces no diff and no mtime change on the second run).
 #   4. Otherwise writes DEST atomically: a temp file in DEST's own
 #      directory (same filesystem, so the final `mv` is a rename, not a
