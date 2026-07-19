@@ -84,13 +84,28 @@ EOF
 # on the second" (the rollback-recovery scenario). Each call consumes the
 # next line of its plan file (local: "ok"/"fail"; remote:
 # "200"/"500"/"unreachable"); once the plan runs out, the last line repeats.
+#
+# The remote branch mirrors REAL curl semantics precisely, including how
+# --fail/-f interacts with -w: a completed request's %{http_code} is still
+# reported by -w even on a non-2xx response, but --fail makes curl's own
+# EXIT code non-zero (22) for that response, identical to a genuine
+# transport failure's non-zero exit. This is deliberate, not an
+# oversimplification: an earlier version of this mock always exited 0 for
+# any non-"unreachable" line regardless of --fail, which hid a real bug in
+# health_check_remote (it originally passed -f and branched on curl's exit
+# status alone, so a reachable HTTP 500 was indistinguishable from a
+# connection failure). Faithfully modeling --fail's exit-code behavior here
+# is what makes the reachable-500 test below actually exercise that bug
+# class instead of passing by accident.
 write_fake_curl() {
   local dir="$1"
   cat > "${dir}/curl" <<'EOF'
 #!/usr/bin/env bash
 is_remote=0
+has_fail_flag=0
 for arg in "$@"; do
   [[ "$arg" == "-w" ]] && is_remote=1
+  { [[ "$arg" == "-f" ]] || [[ "$arg" == "--fail" ]]; } && has_fail_flag=1
 done
 
 if [[ "$is_remote" == "1" ]]; then
@@ -115,8 +130,22 @@ if [[ "$is_remote" == "1" ]]; then
       echo "curl: (7) fake connection refused" >&2
       exit 7
       ;;
-    *)
+    2??)
+      # A 2xx response: -w prints the code and curl exits 0 regardless of
+      # --fail.
       printf '%s' "$line"
+      exit 0
+      ;;
+    *)
+      # A completed request with a non-2xx status (e.g. 500, 404). Real
+      # curl's -w output still reports the actual code even under --fail;
+      # --fail only makes curl's own exit code non-zero (22) for that
+      # response. See the write_fake_curl comment above for why this
+      # distinction matters.
+      printf '%s' "$line"
+      if [[ "$has_fail_flag" == "1" ]]; then
+        exit 22
+      fi
       exit 0
       ;;
   esac
@@ -297,6 +326,29 @@ EOF
   [[ "$output" == *"restart failed for openbrain-web"* ]]
 }
 
+@test "repoint_and_restart fails closed with a distinct message when an already-active secondary unit's restart fails" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  local log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$log"
+
+  run env PATH="${fake_bin}:${PATH}" \
+    FAKE_ACTIVE_openbrain_telegram=active \
+    FAKE_SYSTEMCTL_RESTART_EXIT_openbrain_telegram=1 \
+    bash -c "source '$SCRIPT'; repoint_and_restart '${SYSTEMD_DIR}' '${INSTALL_DIR}'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"restart failed for already-active openbrain-telegram"* ]]
+
+  # Distinct from the primary-unit restart failure above: this fails at a
+  # later step, so every drop-in was already written and the primary unit's
+  # own restart already succeeded before this failure surfaced.
+  for unit in openbrain-web openbrain-telegram openbrain-slack openbrain-watchd; do
+    [ -f "${SYSTEMD_DIR}/${unit}.service.d/override.conf" ]
+  done
+  run cat "$log"
+  [[ "$output" == *"restart openbrain-web"* ]]
+}
+
 @test "repoint_and_restart fails closed with a distinct message when a drop-in write fails" {
   local fake_bin="${WORK_DIR}/fakebin"
   mkdir -p "$fake_bin"
@@ -377,6 +429,26 @@ EOF
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
     bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
   [ "$status" -eq 2 ]
+}
+
+@test "health_check_remote distinguishes a reachable HTTP 500 (genuine failure, status 1) from an unreachable transport failure (status 2)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+  curl_plan "${WORK_DIR}/remote.plan" 500
+
+  run env PATH="${fake_bin}:${PATH}" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
+
+  # A reachable, completed request that answered with a real HTTP error is
+  # NOT the same defect class as curl failing to connect at all: status 1
+  # (genuine failure), never status 2 (remote-unreachable). This is the
+  # exact distinction health_check_remote's docstring promises; a version
+  # that passed -f to curl and branched on curl's own exit status conflated
+  # the two, since curl -f's exit code for a 500 is indistinguishable from
+  # its exit code for a connection refusal.
+  [ "$status" -eq 1 ]
 }
 
 @test "run_health_check returns HEALTH_OK when both tiers pass" {
@@ -471,13 +543,61 @@ EOF
   [ ! -e "${INSTALL_DIR}/openbrain-web" ]
 }
 
-@test "cmd_rollback --dry-run reports the plan and requires an explicit version" {
+@test "cmd_rollback requires an explicit version" {
   run bash -c "source '$SCRIPT'; cmd_rollback 0 ''"
   [ "$status" -ne 0 ]
   [[ "$output" == *"requires an explicit VERSION"* ]]
 }
 
+@test "cmd_rollback --dry-run reports the plan and touches nothing, with no systemctl/curl on PATH at all" {
+  local empty_path="${WORK_DIR}/empty-path"
+  mkdir -p "$empty_path"
+  ln -s "$(command -v bash)" "${empty_path}/bash"
+  ln -s "$(command -v cat)" "${empty_path}/cat"
+
+  run env PATH="$empty_path" bash -c "
+    source '$SCRIPT'
+    OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+    OPENBRAIN_SYSTEMD_USER_DIR='${SYSTEMD_DIR}'
+    cmd_rollback 1 v0.6.0
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DRY RUN"* ]]
+  [[ "$output" == *"target version: v0.6.0"* ]]
+  [ ! -e "${SYSTEMD_DIR}/openbrain-web.service.d/override.conf" ]
+  [ ! -e "${INSTALL_DIR}/openbrain-web" ]
+}
+
 # --- cmd_apply: happy path, idempotency, and rollback-on-failure ---------
+
+@test "cmd_apply aborts before any unit change when the initial install fails" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+
+  run env PATH="$fake_bin:$PATH" \
+    OPENBRAIN_INSTALL_RELEASE_SCRIPT="$installer" \
+    FAKE_INSTALL_RELEASE_EXIT=1 \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_SYSTEMD_USER_DIR='${SYSTEMD_DIR}'
+      cmd_apply 0 v0.8.0
+    "
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to install version v0.8.0; aborting before any unit change"* ]]
+
+  # No unit change happened: no drop-in was ever written, and systemctl was
+  # never invoked (the log file is only created once systemctl is called).
+  [ ! -e "${SYSTEMD_DIR}/openbrain-web.service.d/override.conf" ]
+  [ ! -f "$systemctl_log" ]
+}
 
 @test "cmd_apply happy path: installs, repoints, restarts, and passes health" {
   local fake_bin="${WORK_DIR}/fakebin"
@@ -607,6 +727,50 @@ EOF
   [ "$(echo "$output" | sed -n '3p' | awk -F'|' '{print $3}')" = "v0.7.0" ]
 }
 
+@test "cmd_apply treats a reachable remote HTTP 500 as a genuine failure and triggers automatic rollback (not a benign remote-unreachable no-op)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+
+  env OPENBRAIN_REPO=windingriverholdings/openbrain OPENBRAIN_INSTALL_DIR="$INSTALL_DIR" "$installer" v0.7.0
+
+  # Local passes both times; the remote check is what fails: a reachable
+  # HTTP 500 on the first attempt (genuine failure), then a healthy 200
+  # after the automatic rollback reinstalls v0.7.0. This is the exact
+  # scenario Wren's finding covers: a --fail-based remote check would have
+  # misread the 500 as HEALTH_REMOTE_UNREACHABLE and never rolled back.
+  curl_plan "${WORK_DIR}/local.plan" ok ok
+  curl_plan "${WORK_DIR}/remote.plan" 500 200
+
+  run env PATH="$fake_bin:$PATH" \
+    OPENBRAIN_INSTALL_RELEASE_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_SYSTEMD_USER_DIR='${SYSTEMD_DIR}'
+      cmd_apply 0 v0.8.0
+    "
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"genuine health-check failure at v0.8.0"* ]]
+  [[ "$output" == *"attempting automatic rollback"* ]]
+  [[ "$output" == *"automatic rollback to v0.7.0 succeeded"* ]]
+
+  run cat "$installer_log"
+  # v0.7.0 (seed) then v0.8.0 (apply target) then v0.7.0 again (the rollback
+  # reinstall triggered by the 500): rollback genuinely ran, it was not
+  # skipped as a benign remote-unreachable case.
+  [ "$(echo "$output" | wc -l)" -eq 3 ]
+  [ "$(echo "$output" | sed -n '3p' | awk -F'|' '{print $3}')" = "v0.7.0" ]
+}
+
 @test "cmd_apply surfaces a loud actionable error when the automatic rollback itself also fails" {
   local fake_bin="${WORK_DIR}/fakebin"
   mkdir -p "$fake_bin"
@@ -673,6 +837,54 @@ EOF
   # a rollback that had nowhere to go.
   [ "$(grep -c '|v0.8.0$' "$installer_log")" -eq 1 ]
   [ "$(wc -l < "$installer_log")" -eq 1 ]
+}
+
+# --- rollback_to_version: isolated failure branches -----------------------
+
+@test "rollback_to_version fails loud when it cannot even reinstall the prior version" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+
+  run env PATH="$fake_bin:$PATH" \
+    OPENBRAIN_INSTALL_RELEASE_SCRIPT="$installer" \
+    FAKE_INSTALL_RELEASE_EXIT=1 \
+    bash -c "source '$SCRIPT'; rollback_to_version windingriverholdings/openbrain '${INSTALL_DIR}' '${SYSTEMD_DIR}' http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp v0.6.0"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to reinstall prior version v0.6.0"* ]]
+
+  # The reinstall failed before any unit change was attempted at all.
+  [ ! -f "$systemctl_log" ]
+}
+
+@test "rollback_to_version fails loud when the reinstall succeeds but repoint/restart fails" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+
+  run env PATH="$fake_bin:$PATH" \
+    OPENBRAIN_INSTALL_RELEASE_SCRIPT="$installer" \
+    FAKE_SYSTEMCTL_RELOAD_EXIT=1 \
+    bash -c "source '$SCRIPT'; rollback_to_version windingriverholdings/openbrain '${INSTALL_DIR}' '${SYSTEMD_DIR}' http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp v0.6.0"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"failed to repoint/restart during rollback to v0.6.0"* ]]
+
+  # Distinct from the "cannot even reinstall" branch above: the reinstall
+  # itself DID run here; it is the unit-change step that failed.
+  run cat "$installer_log"
+  [ "$output" = "windingriverholdings/openbrain|${INSTALL_DIR}|v0.6.0" ]
 }
 
 # --- cmd_rollback: on-demand -----------------------------------------------

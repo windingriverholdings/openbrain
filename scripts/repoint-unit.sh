@@ -200,9 +200,14 @@ repoint_and_restart() {
 }
 
 # health_check_local runs the local /health probe and treats anything other
-# than a reachable "ok" body as a failure. Guarded explicitly: invoked as
-# `health_check_local ... || ...` from run_health_check, which suspends
-# errexit for this body.
+# than a reachable "ok" body as a failure. Local has no "unreachable but
+# benign" tier the way the remote check does (there is no cloudflared, no
+# third-party network hop between this box and 127.0.0.1): any failure here,
+# whether a connection refusal or a non-2xx response, is genuinely broken,
+# so a single pass/fail signal via curl -f is correct and does not share the
+# remote check's exit-code-conflation flaw (see health_check_remote).
+# Guarded explicitly: invoked as `health_check_local ... || ...` from
+# run_health_check, which suspends errexit for this body.
 health_check_local() {
   local url="$1"
   local body
@@ -218,18 +223,38 @@ health_check_local() {
 # genuine failure apart from an unrelated tunnel outage:
 #   0  reachable and returned HTTP 200
 #   1  reachable but returned a non-200 status: a genuine failure
-#   2  unreachable (curl could not even complete the request): treat as
-#      remote-unreachable, not a genuine failure, per the data-invariants
-#      boundary-check discipline (this is the "distinguish the boundary
-#      itself" case: a cloudflared outage is not the same defect class as a
-#      broken openbrain-web).
+#   2  unreachable (curl itself could not complete the request: DNS failure,
+#      connection refused, TLS failure, timeout): treat as remote-unreachable,
+#      not a genuine failure, per the data-invariants boundary-check
+#      discipline (this is the "distinguish the boundary itself" case: a
+#      cloudflared outage is not the same defect class as a broken
+#      openbrain-web).
+#
+# Deliberately does NOT pass -f/--fail to curl. curl -f exits non-zero on
+# ANY 4xx/5xx response, which is indistinguishable from curl's exit code on
+# a genuine transport failure (connection refused is also non-zero). An
+# earlier version used -f and branched only on curl's exit status, which
+# misclassified a reachable-but-broken openbrain-web (HTTP 500) as
+# HEALTH_REMOTE_UNREACHABLE, silently skipping the rollback a real outage
+# requires. Reachability and HTTP status are two separate signals, checked
+# separately below: curl_status says whether the request completed at all;
+# http_code says what the server answered once it did.
 health_check_remote() {
   local url="$1"
   local payload='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-06-18","capabilities":{},"clientInfo":{"name":"repoint-unit-healthcheck","version":"1"}}}'
-  local http_code
-  if ! http_code="$(curl -fsS --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$payload" "$url" 2>/dev/null)"; then
+  local http_code=""
+  local curl_status=0
+
+  # Guarded explicitly with the `|| curl_status=$?` capture pattern used
+  # throughout this file: a bare assignment statement is still subject to
+  # this script's own `set -euo pipefail`, so an unguarded non-zero curl
+  # exit here would abort the caller before curl_status is ever inspected.
+  http_code="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$payload" "$url" 2>/dev/null)" || curl_status=$?
+
+  if [[ "$curl_status" -ne 0 ]]; then
     return 2
   fi
+
   [[ "$http_code" == "200" ]] && return 0
   return 1
 }
@@ -325,8 +350,9 @@ dry_run_plan() {
 
   log_info "would run: systemctl --user daemon-reload"
   log_info "would run: systemctl --user restart ${PRIMARY_UNIT}"
+  log_info "would run, only for a secondary unit already active (dry-run does not query live state; an inactive unit is left inactive):"
   for unit in "${SECONDARY_UNITS[@]}"; do
-    log_info "would run: systemctl --user restart ${unit} (only if it is currently active; dry-run does not query live state, and an inactive unit is left inactive)"
+    log_info "  systemctl --user restart ${unit}"
   done
   log_info "would then run the two-tier health check for ${PRIMARY_UNIT}: local ${OPENBRAIN_HEALTH_LOCAL_URL}, remote ${OPENBRAIN_HEALTH_REMOTE_URL}"
 }
@@ -424,6 +450,10 @@ cmd_apply() {
   fi
 
   log_info "automatic rollback to ${previous_version} succeeded; service recovered"
+  # Intentional: cmd_apply still reports failure here even though the
+  # rollback itself succeeded. The requested version never became healthy;
+  # the service being back on the prior version is a successful recovery,
+  # not a successful apply of what the caller asked for.
   return 1
 }
 
