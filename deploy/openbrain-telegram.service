@@ -1,15 +1,23 @@
 [Unit]
 Description=OpenBrain Telegram Bot
 Documentation=https://github.com/windingriverholdings/openbrain
-After=network.target postgresql.service
+# Phase 3.5 (OB-066): system unit. Postgres is a local system unit on this
+# host, so ordering against it here is meaningful (unlike under --user).
+After=network-online.target postgresql.service
+Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/repos/openbrain
+User=craig8
 
-EnvironmentFile=%h/repos/openbrain/.env
+# Not the repo: openbrain-telegram writes nothing to disk (confirmed by
+# reading cmd/openbrain-telegram: no os.WriteFile/os.Create/os.MkdirAll/
+# os.Rename calls in that package).
+WorkingDirectory=/home/craig8
 
-ExecStart=%h/repos/openbrain/bin/openbrain-telegram
+EnvironmentFile=/etc/openbrain/openbrain.env
+
+ExecStart=/usr/local/bin/openbrain-telegram
 
 Restart=on-failure
 RestartSec=10
@@ -20,7 +28,8 @@ SyslogIdentifier=openbrain-telegram
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/repos/openbrain
+# No ReadWritePaths: openbrain-telegram writes nothing under the repo or
+# anywhere else on disk (see the WorkingDirectory comment above).
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

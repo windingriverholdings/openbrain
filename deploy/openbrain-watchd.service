@@ -1,15 +1,24 @@
 [Unit]
 Description=OpenBrain sandbox file bridge daemon
-After=network.target postgresql.service
+Documentation=https://github.com/windingriverholdings/openbrain
+# Phase 3.5 (OB-066): system unit. Postgres is a local system unit on this
+# host, so ordering against it here is meaningful (unlike under --user).
+After=network-online.target postgresql.service
+Wants=network-online.target
 PartOf=openbrain-web.service
 
 [Service]
 Type=simple
-WorkingDirectory=%h/repos/openbrain
+User=craig8
 
-ExecStart=%h/repos/openbrain/bin/openbrain-watchd
+# Not the repo: watchd's own writes are absolute paths from the env file
+# (OPENBRAIN_INGEST_DIR) and the sandbox bridge dir below, not anything
+# relative to WorkingDirectory.
+WorkingDirectory=/home/craig8
 
-EnvironmentFile=%h/repos/openbrain/.env
+ExecStart=/usr/local/bin/openbrain-watchd
+
+EnvironmentFile=/etc/openbrain/openbrain.env
 
 Restart=on-failure
 RestartSec=5
@@ -17,7 +26,11 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/repos/openbrain %h/.openclaw
+# watchd persists its ingest-tracking state to
+# <OPENBRAIN_INGEST_DIR>/.watchd-state.json (internal/watcher/state.go via
+# cmd/openbrain-watchd/main.go), and keeps its pre-existing sandbox bridge
+# write path (~/.openclaw). The repo checkout path is dropped.
+ReadWritePaths=/home/craig8/.config/openbrain/ingest /home/craig8/.openclaw
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
