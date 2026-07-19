@@ -379,6 +379,12 @@ repoint_and_restart() {
   for unit in "${SECONDARY_UNITS[@]}"; do
     if unit_is_active "$systemctl_bin" "$unit" "$use_sudo_flag" "$sudo_bin"; then
       if ! restart_unit "$systemctl_bin" "$unit" "$use_sudo_flag" "$sudo_bin"; then
+        # A distinct message from the primary-unit restart failure above:
+        # restart_unit already logged the bare "restart failed for
+        # ${unit}"; this adds the "already-active" context so the two
+        # failure sites are distinguishable in the output, matching
+        # OB-063's retired repoint-unit.sh convention.
+        log_error dropin "restart failed for already-active ${unit}"
         return 6
       fi
     fi

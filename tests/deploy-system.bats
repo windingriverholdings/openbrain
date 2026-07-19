@@ -354,6 +354,29 @@ EOF
   [[ "$output" == *"restart failed for openbrain-web"* ]]
 }
 
+@test "repoint_and_restart fails closed (exit 6) with a distinct message when an already-active secondary unit's restart fails" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  local log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$log"
+
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_EUID=0 \
+    FAKE_ACTIVE_openbrain_telegram_service=active \
+    FAKE_SYSTEMCTL_RESTART_EXIT_openbrain_telegram_service=1 \
+    bash -c "source '$SCRIPT'; repoint_and_restart '${SYSTEMD_DIR}' '${INSTALL_DIR}' systemctl sudo || echo \"exit=\$?\""
+  [[ "$output" == *"exit=6"* ]]
+  [[ "$output" == *"restart failed for already-active openbrain-telegram"* ]]
+
+  # Distinct from the primary-unit restart failure above: this fails at a
+  # later step, so every drop-in was already written and the primary
+  # unit's own restart already succeeded before this failure surfaced.
+  for unit in openbrain-web openbrain-telegram openbrain-slack openbrain-watchd; do
+    [ -f "${SYSTEMD_DIR}/${unit}.service.d/override.conf" ]
+  done
+  run cat "$log"
+  [[ "$output" == *"restart openbrain-web.service"* ]]
+}
+
 @test "repoint_and_restart fails closed (exit 4) when a drop-in write fails" {
   local fake_bin="${WORK_DIR}/fakebin"
   mkdir -p "$fake_bin"
@@ -453,6 +476,33 @@ EOF
 
 @test "current_installed_version fails closed with no output when nothing is installed yet" {
   run bash -c "source '$SCRIPT'; current_installed_version '${INSTALL_DIR}'"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
+
+@test "current_installed_version is bounded by OPENBRAIN_DS_VERSION_CHECK_TIMEOUT and does not hang on a stuck binary" {
+  local hung_bin="${INSTALL_DIR}/openbrain-web"
+  cat > "$hung_bin" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  sleep 30
+  echo "should-never-print"
+  exit 0
+fi
+exit 1
+EOF
+  chmod +x "$hung_bin"
+
+  local start end elapsed
+  start="$(date +%s)"
+  run env OPENBRAIN_DS_VERSION_CHECK_TIMEOUT=1 \
+    bash -c "source '$SCRIPT'; current_installed_version '${INSTALL_DIR}'"
+  end="$(date +%s)"
+  elapsed=$((end - start))
+
+  # Bounded well under the binary's 30s sleep: the timeout (1s) plus normal
+  # process overhead, never the full hang duration.
+  [ "$elapsed" -lt 10 ]
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
@@ -789,6 +839,13 @@ EOF
   [ "$status" -eq 9 ]
   [[ "$output" == *"reinstalled 'v0.7.0' but its cutover still failed"* ]]
   [[ "$output" == *"manual intervention required"* ]]
+
+  # daemon-reload and restart ran twice: once for the failed v0.8.0
+  # cutover, once for the rollback cutover that also failed health. Never
+  # a restart-loop retrying the same version (matching the exit-10 test's
+  # loop-freedom assertion).
+  run cat "$systemctl_log"
+  [ "$(grep -c '^restart openbrain-web.service$' "$systemctl_log")" -eq 2 ]
 }
 
 # --- cmd_rollback: on-demand path -----------------------------------------
