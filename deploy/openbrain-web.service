@@ -1,17 +1,29 @@
 [Unit]
-Description=OpenBrain Web UI (mybrain.local:10203)
+Description=OpenBrain Web UI (127.0.0.1:10203)
 Documentation=https://github.com/windingriverholdings/openbrain
-After=network.target postgresql.service
+# Phase 3.5 (OB-066): system unit, converged with openknowledge's model.
+# Postgres is a LOCAL system unit on this host (OPENBRAIN_DB_HOST defaults
+# to localhost), so ordering against it is meaningful here, unlike under
+# the old --user unit where a user unit cannot order against a system unit
+# at all. network-online.target covers Ollama, Telegram/Slack APIs, and the
+# OAuth issuer, which are all reached over the network.
+After=network-online.target postgresql.service
+Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/repos/openbrain
+User=craig8
 
-# Load env from .env file
-EnvironmentFile=%h/repos/openbrain/.env
+# Not the repo: no openbrain-web code path resolves a relative path against
+# WorkingDirectory (storage is Postgres; the one thing it writes,
+# upload-staging, uses an absolute OPENBRAIN_INGEST_DIR from the env file).
+WorkingDirectory=/home/craig8
 
-# Go binary — no Python, no pixi
-ExecStart=%h/repos/openbrain/bin/openbrain-web
+# Config lives in /etc, out of git, mode 0600 (Phase 3.5 config relocation).
+EnvironmentFile=/etc/openbrain/openbrain.env
+
+# Released binary path (Phase 2 installer's target), not the repo bin/.
+ExecStart=/usr/local/bin/openbrain-web
 
 Environment=OPENBRAIN_WEB_HOST=127.0.0.1
 Environment=OPENBRAIN_WEB_PORT=10203
@@ -26,7 +38,11 @@ SyslogIdentifier=openbrain-web
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/repos/openbrain
+# openbrain-web stages document uploads under
+# <OPENBRAIN_INGEST_DIR>/.uploads/ (cmd/openbrain-web/handler_ingest.go,
+# stageUpload). The repo checkout path is dropped: nothing under it is
+# written by this service anymore.
+ReadWritePaths=/home/craig8/.config/openbrain/ingest
 
 # TODO(tailscale): When exposing over Tailscale, change OPENBRAIN_WEB_HOST
 #                  to 0.0.0.0 (or your Tailscale IP) and add Caddy in front
@@ -34,4 +50,4 @@ ReadWritePaths=%h/repos/openbrain
 #                  if binding to port 443 directly.
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
