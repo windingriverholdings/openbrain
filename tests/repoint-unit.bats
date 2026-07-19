@@ -105,7 +105,21 @@ is_remote=0
 has_fail_flag=0
 for arg in "$@"; do
   [[ "$arg" == "-w" ]] && is_remote=1
-  { [[ "$arg" == "-f" ]] || [[ "$arg" == "--fail" ]]; } && has_fail_flag=1
+  # Real curl accepts --fail as a standalone long option, but -f is a
+  # short option that can be clustered with other short options in one
+  # token (e.g. -fsS, -sf): a token starting with a single dash (not the
+  # double-dash of a long option) whose letters include an "f" is
+  # fail-mode, exactly like real curl's getopt-style short-flag parsing.
+  # A version of this mock that only matched the standalone "-f"/"--fail"
+  # token never flagged the ORIGINAL buggy health_check_remote's
+  # `curl -fsS ...` call, so the reachable-500 regression tests passed
+  # even against the unfixed code: a false-green, not a real regression
+  # guard.
+  if [[ "$arg" == "--fail" ]]; then
+    has_fail_flag=1
+  elif [[ "$arg" == -* && "$arg" != --* && "$arg" == *f* ]]; then
+    has_fail_flag=1
+  fi
 done
 
 if [[ "$is_remote" == "1" ]]; then
