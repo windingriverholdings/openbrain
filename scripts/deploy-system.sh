@@ -59,12 +59,19 @@
 #      system-scope restart fails "unit not found". Idempotent and atomic,
 #      same discipline as the drop-in write. Done BEFORE any --user teardown
 #      so a failure here leaves the old --user units still serving.
-#   5. Old --user teardown (Gap 1): captures which --user units are active
-#      (for rollback), stops and disables the four --user units, and disables
-#      linger. This is the LAST step before the system unit starts, so there
-#      is never a window with two binders on 127.0.0.1:10203. Every part is
-#      idempotent: an already-stopped --user unit and already-disabled linger
-#      are no-ops, not errors.
+#   5. Old --user teardown (Gap 1): captures which --user units are ACTIVE
+#      (by `systemctl --user is-active`, not by unit-file presence in
+#      OPENBRAIN_DS_USER_SYSTEMD_DIR alone: an active unit whose file lives
+#      elsewhere must still be captured and torn down, or the double-bind on
+#      the port only surfaces later as a cutover health-check failure),
+#      stops and disables the four --user units, and disables linger. This
+#      is the LAST step before the system unit starts, so there is never a
+#      window with two binders on 127.0.0.1:10203. Every part is idempotent:
+#      an already-stopped --user unit and already-disabled linger are
+#      no-ops, not errors. A failure tearing down the --user units or
+#      disabling linger runs the same health-gated restore_user_path used
+#      by step 10 below and reports exit 14 or 15, never a bare unsignaled
+#      failure (see the exit-code table).
 #   6. Writes an ExecStart-only systemd drop-in for EACH of the four units
 #      (<unit>.service.d/override.conf under /etc/systemd/system/). The
 #      shipped unit files are NEVER edited in place. Every other directive
@@ -135,18 +142,27 @@
 #      live: this run did not achieve its goal even though the service
 #      recovered
 #  11  config-precedes-start preflight failed: the EnvironmentFile
-#      (/etc/openbrain/openbrain.env) does not exist. Nothing was torn down
-#      or changed; relocate the config first (scripts/relocate-config.sh)
+#      (/etc/openbrain/openbrain.env) does not exist OR is empty. Nothing
+#      was torn down or changed; relocate the config first
+#      (scripts/relocate-config.sh)
 #  12  base system unit install failed (apply path): nothing was torn down,
 #      the --user units are left serving
-#  13  old --user teardown or linger-disable failed (apply path): a
-#      best-effort restore of any --user unit stopped this run is attempted
-#      before returning
-#  14  FIRST-cutover recovery: the system cutover failed AND restoring the
-#      --user path also failed. The memory backend may be DOWN; manual
-#      intervention required
-#  15  FIRST-cutover recovery SUCCEEDED: the system cutover failed, but the
-#      previously-active --user path was restored and is serving again. The
+#  13  RESERVED, no longer returned by cmd_apply. A teardown or
+#      linger-disable failure during the --user-to-system cutover used to
+#      return this code after a best-effort, unverified restore (`||
+#      true`), which could report a benign exit while the memory backend
+#      was actually down and unsignaled (Leon HIGH, Wren HIGH-1/HIGH-2,
+#      OB-068 review). Both of those failure sites now route through the
+#      same health-gated restore_user_path used by exit 14/15 below, so
+#      they always resolve to one of those two codes instead
+#  14  Recovery FAILED: this run tore down a live --user openbrain-web (or
+#      attempted to) and the subsequent health-gated restore_user_path did
+#      NOT bring the --user path back healthy, whether the failure that
+#      triggered recovery was the --user teardown itself, the linger
+#      disable, or the eventual system cutover's health check. The memory
+#      backend may be DOWN; manual intervention required
+#  15  Recovery SUCCEEDED: as exit 14, but restore_user_path confirmed the
+#      --user path is serving again (local health check passed). The
 #      requested system cutover did NOT go live
 #  16  system cutover is live and healthy, but `systemctl enable` for boot
 #      persistence failed. The service runs now but will NOT start after a
@@ -242,7 +258,17 @@ OPENBRAIN_DS_LOGINCTL="${OPENBRAIN_DS_LOGINCTL:-loginctl}"
 # itself regardless of whether `id` is reachable, so a PATH-starved test
 # fixture (see tests/deploy-system.bats' "no privilege and no sudo on PATH"
 # cases) still sources cleanly.
-OPENBRAIN_DS_LINGER_USER="${OPENBRAIN_DS_LINGER_USER:-$(id -un 2>/dev/null || printf '%s' "${USER:-craig8}")}"
+#
+# Falls back to EMPTY, never to a guessed username, when neither `id` nor
+# $USER resolves (Wren LOW, OB-068 review): a hardcoded fallback like
+# "craig8" would let this tool silently disable or enable linger for the
+# WRONG real account on a host where the invoking identity genuinely cannot
+# be determined, or (on this specific host) for the right account by
+# coincidence, which is not something to depend on. An empty value makes
+# the actual privileged loginctl invocations in disable_linger/enable_linger
+# fail on their own argument validation instead of silently acting against
+# a guessed identity.
+OPENBRAIN_DS_LINGER_USER="${OPENBRAIN_DS_LINGER_USER:-$(id -un 2>/dev/null || printf '%s' "${USER:-}")}"
 
 SERVICE_UNITS=(openbrain-web openbrain-telegram openbrain-slack openbrain-watchd)
 PRIMARY_UNIT="openbrain-web"
@@ -299,6 +325,63 @@ use_sudo() {
 }
 
 # ---------------------------------------------------------------------------
+# Atomic privileged write (shared by write_drop_in and install_base_unit)
+# ---------------------------------------------------------------------------
+
+# atomic_privileged_write reads the desired content from STDIN and writes it
+# to FINAL_PATH atomically: creates DEST_DIR if needed, stages the content in
+# a mktemp file (TMP_TEMPLATE) inside DEST_DIR (same filesystem as
+# FINAL_PATH, so the final `mv` is a rename, not a cross-filesystem copy),
+# sets MODE, then renames onto FINAL_PATH in one step. A partially-written
+# file is never visible at FINAL_PATH. Shared by write_drop_in (content from
+# a string, piped in) and install_base_unit (content from a file, redirected
+# in), so the mkdir -> mktemp -> write -> chmod -> atomic-rename discipline
+# lives in exactly one place (Dutch DRY finding, OB-068 review) instead of
+# being duplicated line-for-line in both callers.
+#
+# Guarded explicitly throughout (not left to the surrounding `set -e`): both
+# callers invoke this as `... | atomic_privileged_write ... || return 1` (or
+# `atomic_privileged_write ... < src || return 1`), which suspends errexit
+# for the whole call, so every abort-worthy command here is checked
+# explicitly rather than relying on that suspended errexit to catch it.
+atomic_privileged_write() {
+  local dest_dir="$1" tmp_template="$2" final_path="$3" mode="$4" use_sudo_flag="$5" sudo_bin="$6"
+  local -a priv=()
+  [[ "$use_sudo_flag" == "1" ]] && priv=("$sudo_bin")
+
+  if ! "${priv[@]}" mkdir -p "$dest_dir" 2>&1; then
+    log_error write "failed to create ${dest_dir}"
+    return 1
+  fi
+
+  local tmp_path
+  if ! tmp_path="$("${priv[@]}" mktemp "${dest_dir}/${tmp_template}" 2>&1)"; then
+    log_error write "failed to create a temp file in ${dest_dir}"
+    return 1
+  fi
+
+  if ! "${priv[@]}" tee "$tmp_path" >/dev/null 2>&1; then
+    log_error write "failed to write ${tmp_path}"
+    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+
+  if ! "${priv[@]}" chmod "$mode" "$tmp_path" 2>&1; then
+    log_error write "failed to set mode ${mode} on ${tmp_path}"
+    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+
+  if ! "${priv[@]}" mv -f -- "$tmp_path" "$final_path" 2>&1; then
+    log_error write "atomic rename of ${tmp_path} to ${final_path} failed"
+    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Drop-in rendering and writing
 # ---------------------------------------------------------------------------
 
@@ -331,19 +414,11 @@ drop_in_path() {
 
 # write_drop_in is idempotent: if the target file already holds exactly the
 # desired content, it is left untouched (no mtime change, no rewrite).
-# Otherwise it writes atomically: a temp file in the drop-in directory
-# (same filesystem), then a single rename onto the final path, so a
-# partially-written drop-in is never visible there.
-#
-# Guarded explicitly throughout (not left to the surrounding `set -e`):
-# this function is invoked as `write_drop_in ... || return 1` from
-# repoint_and_restart, which suspends errexit for its whole body. An
-# unguarded mkdir/mktemp/write failure here would otherwise be silently
-# swallowed and the caller would proceed as if the drop-in were in place.
+# Otherwise it delegates the atomic write to atomic_privileged_write (mkdir,
+# mktemp-in-dir, write, chmod, atomic rename), so a partially-written drop-in
+# is never visible there.
 write_drop_in() {
   local systemd_dir="$1" unit="$2" install_dir="$3" use_sudo_flag="$4" sudo_bin="$5"
-  local -a priv=()
-  [[ "$use_sudo_flag" == "1" ]] && priv=("$sudo_bin")
   local dir path content
   dir="$(drop_in_dir "$systemd_dir" "$unit")"
   path="$(drop_in_path "$systemd_dir" "$unit")"
@@ -357,32 +432,8 @@ write_drop_in() {
     fi
   fi
 
-  if ! "${priv[@]}" mkdir -p "$dir" 2>&1; then
-    log_error dropin "failed to create ${dir} for ${unit}"
-    return 1
-  fi
-
-  local tmp_path
-  if ! tmp_path="$("${priv[@]}" mktemp "${dir}/.override.conf.XXXXXX" 2>&1)"; then
-    log_error dropin "failed to create a temp file in ${dir} for ${unit}"
-    return 1
-  fi
-
-  if ! printf '%s' "$content" | "${priv[@]}" tee "$tmp_path" >/dev/null 2>&1; then
-    log_error dropin "failed to write ${tmp_path} for ${unit}"
-    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
-    return 1
-  fi
-
-  if ! "${priv[@]}" chmod 0644 "$tmp_path" 2>&1; then
-    log_error dropin "failed to set mode 0644 on ${tmp_path} for ${unit}"
-    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
-    return 1
-  fi
-
-  if ! "${priv[@]}" mv -f -- "$tmp_path" "$path" 2>&1; then
-    log_error dropin "atomic rename of ${tmp_path} to ${path} failed for ${unit}"
-    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
+  if ! printf '%s' "$content" | atomic_privileged_write "$dir" ".override.conf.XXXXXX" "$path" 0644 "$use_sudo_flag" "$sudo_bin"; then
+    log_error dropin "failed to write the drop-in for ${unit} (see the error above for the failing stage)"
     return 1
   fi
 
@@ -395,15 +446,23 @@ write_drop_in() {
 # ---------------------------------------------------------------------------
 
 # check_env_file_present fails closed when the system units' EnvironmentFile
-# does not exist. It is checked BEFORE any --user teardown so a missing
+# does not exist OR is empty (a zero-byte file provides no config at all,
+# the same practical failure mode as a missing one; Leon LOW, OB-068
+# review). It is checked BEFORE any --user teardown so a missing or empty
 # config never leaves the memory backend dead: a system openbrain-web whose
-# EnvironmentFile is absent will not start, and starting it after the --user
-# unit has already been stopped would strand the backend. This tool only
-# checks presence; relocate-config.sh is what actually populates the file.
+# EnvironmentFile is absent or empty will not start correctly, and starting
+# it after the --user unit has already been stopped would strand the
+# backend. This tool only checks presence and non-emptiness, not the
+# validity of individual variables inside the file; relocate-config.sh is
+# what actually populates it.
 check_env_file_present() {
   local env_file="$1"
   if [[ ! -f "$env_file" ]]; then
     log_error preflight "the system units' EnvironmentFile does not exist: ${env_file}. Relocate the config first (scripts/relocate-config.sh), then re-run. Nothing was changed."
+    return 1
+  fi
+  if [[ ! -s "$env_file" ]]; then
+    log_error preflight "the system units' EnvironmentFile is empty: ${env_file}. This looks like a broken or incomplete relocation, not a populated config. Relocate the config first (scripts/relocate-config.sh), then re-run. Nothing was changed."
     return 1
   fi
   return 0
@@ -415,17 +474,15 @@ check_env_file_present() {
 
 # install_base_unit copies deploy/<unit>.service into the system systemd dir
 # so the ExecStart drop-in has a base unit to attach to. Idempotent (a
-# byte-identical target is left untouched, no mtime change) and atomic (temp
-# file in the destination dir, then a single rename), same discipline as
-# write_drop_in. Guarded explicitly throughout: invoked as
-# `install_base_unit ... || return 1` from install_base_units, which suspends
-# errexit for its whole body, so an unguarded copy/rename failure here would
-# otherwise be swallowed and the caller would proceed as if the base unit
-# were in place when it is not.
+# byte-identical target is left untouched, no mtime change); the write
+# itself delegates to atomic_privileged_write, same discipline as
+# write_drop_in. Guarded explicitly: invoked as `install_base_unit ... ||
+# return 1` from install_base_units, which suspends errexit for its whole
+# body, so an unguarded copy/rename failure here would otherwise be
+# swallowed and the caller would proceed as if the base unit were in place
+# when it is not.
 install_base_unit() {
   local systemd_dir="$1" deploy_dir="$2" unit="$3" use_sudo_flag="$4" sudo_bin="$5"
-  local -a priv=()
-  [[ "$use_sudo_flag" == "1" ]] && priv=("$sudo_bin")
   local src="${deploy_dir}/${unit}.service"
   local dst="${systemd_dir}/${unit}.service"
 
@@ -439,32 +496,8 @@ install_base_unit() {
     return 0
   fi
 
-  if ! "${priv[@]}" mkdir -p "$systemd_dir" 2>&1; then
-    log_error baseunit "failed to create ${systemd_dir} for ${unit}"
-    return 1
-  fi
-
-  local tmp_path
-  if ! tmp_path="$("${priv[@]}" mktemp "${systemd_dir}/.${unit}.service.XXXXXX" 2>&1)"; then
-    log_error baseunit "failed to create a temp file in ${systemd_dir} for ${unit}"
-    return 1
-  fi
-
-  if ! "${priv[@]}" tee "$tmp_path" < "$src" >/dev/null 2>&1; then
-    log_error baseunit "failed to stage ${src} into ${tmp_path} for ${unit}"
-    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
-    return 1
-  fi
-
-  if ! "${priv[@]}" chmod 0644 "$tmp_path" 2>&1; then
-    log_error baseunit "failed to set mode 0644 on ${tmp_path} for ${unit}"
-    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
-    return 1
-  fi
-
-  if ! "${priv[@]}" mv -f -- "$tmp_path" "$dst" 2>&1; then
-    log_error baseunit "atomic rename of ${tmp_path} to ${dst} failed for ${unit}"
-    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
+  if ! atomic_privileged_write "$systemd_dir" ".${unit}.service.XXXXXX" "$dst" 0644 "$use_sudo_flag" "$sudo_bin" < "$src"; then
+    log_error baseunit "failed to install the base unit for ${unit} (see the error above for the failing stage)"
     return 1
   fi
 
@@ -603,15 +636,21 @@ user_unit_is_active() {
   "$systemctl_bin" --user is-active --quiet "${unit}.service"
 }
 
-# teardown_user_unit stops and disables one --user unit, but only if its
-# --user unit file is present (idempotent: nothing to tear down otherwise).
+# teardown_user_unit stops and disables one --user unit whenever it is
+# present in OPENBRAIN_DS_USER_SYSTEMD_DIR OR currently active (idempotent:
+# nothing to tear down when neither is true). Checking is-active as well as
+# presence, not presence alone, matters because an ACTIVE --user unit whose
+# unit file happens to live outside the configured dir would otherwise be
+# neither captured nor torn down, so the system unit double-binds the port
+# and the failure only surfaces later as a cutover health-check failure
+# instead of being caught directly here (Wren MEDIUM, OB-068 review).
 # `disable --now` on an already-inactive, already-disabled unit is a no-op
 # success, so a second run converges. Guarded explicitly: called under
-# `teardown_user_units ... || return 13`, which suspends errexit.
+# `teardown_user_units ... || ...`, which suspends errexit.
 teardown_user_unit() {
   local systemctl_bin="$1" user_systemd_dir="$2" unit="$3"
 
-  if ! user_unit_present "$user_systemd_dir" "$unit"; then
+  if ! user_unit_present "$user_systemd_dir" "$unit" && ! user_unit_is_active "$systemctl_bin" "$unit"; then
     return 0
   fi
 
@@ -624,7 +663,8 @@ teardown_user_unit() {
 }
 
 # teardown_user_units tears down all four --user units. Returns non-zero on
-# the first failure (caller maps to exit 13).
+# the first failure (caller routes the recovery through restore_user_path;
+# see cmd_apply).
 teardown_user_units() {
   local systemctl_bin="$1" user_systemd_dir="$2"
   local unit
@@ -893,11 +933,12 @@ dry_run_plan() {
     log_info "  ${OPENBRAIN_DS_DEPLOY_DIR}/${unit}.service -> ${systemd_dir}/${unit}.service (mode 0644, idempotent)"
   done
 
-  log_info "would then tear down the old --user units (Gap 1), for each --user unit present in ${OPENBRAIN_DS_USER_SYSTEMD_DIR} (dry-run does not query live state):"
+  log_info "would then tear down the old --user units (Gap 1), for each --user unit active OR present in ${OPENBRAIN_DS_USER_SYSTEMD_DIR} (dry-run does not query live state):"
   for unit in "${SERVICE_UNITS[@]}"; do
     log_info "  ${OPENBRAIN_DS_SYSTEMCTL} --user disable --now ${unit}.service"
   done
   log_info "would then disable linger, only if currently enabled: ${OPENBRAIN_DS_LOGINCTL} disable-linger ${OPENBRAIN_DS_LINGER_USER}"
+  log_info "if either the --user teardown or the linger disable fails, apply would restore the --user path (health-gated) so the memory backend keeps serving, the same recovery a cutover health-check failure below uses"
 
   for unit in "${SERVICE_UNITS[@]}"; do
     path="$(drop_in_path "$systemd_dir" "$unit")"
@@ -959,22 +1000,40 @@ cmd_dry_run() {
   return 0
 }
 
-# restore_user_path is the FIRST-cutover recovery: the system cutover failed,
-# and this run had torn down a live --user openbrain-web, so nothing is
-# serving the memory backend. It frees 127.0.0.1:10203 by stopping and
-# disabling the system units, re-enables linger, re-enables and starts the
-# --user units that were active before teardown, and confirms the local
-# health endpoint answers again. Returns 0 when the --user path is serving
-# again, non-zero when it is not (the memory backend may be down).
+# restore_user_path is the recovery used whenever this run tore down a live
+# --user openbrain-web and something downstream then failed (the teardown
+# itself, the linger disable, or the eventual cutover health check), so
+# nothing may be serving the memory backend at that point. It frees
+# 127.0.0.1:10203 by stopping and disabling the system units, re-enables
+# linger, re-enables and starts the --user units that were active before
+# teardown, and confirms the local health endpoint answers again. Returns 0
+# when the --user path is serving again, non-zero when it is not (the memory
+# backend may be down). Every call site in cmd_apply checks this return value
+# and maps it to a distinct exit code (15 restored, 14 may be down): the
+# result is NEVER discarded with `|| true`, because a discarded result here
+# is exactly the defect class this function's callers must not reintroduce
+# (OB-068 review, Leon/Wren HIGH).
+#
+# Parameter order matches every other privileged helper in this file
+# (systemctl_bin, use_sudo_flag, sudo_bin, ...), not the reversed
+# (systemctl_bin, sudo_bin, use_sudo_flag, ...) this function shipped with
+# initially (Dutch MEDIUM, OB-068 review).
 #
 # The system-unit free-the-port step is best-effort (a failure there is
 # logged but does not abort recovery): the goal is to give the old --user
 # path a chance to bind the port, and the health check at the end is the
-# authoritative signal of whether the backend recovered.
+# authoritative signal of whether the backend recovered. Likewise, an
+# individual restore_user_unit failure is logged but does not abort the
+# loop (best-effort per-unit), because the final health check is what
+# actually decides success or failure for the caller: a partial restore
+# that still leaves the health endpoint answering is a success, and a
+# partial restore that does not is correctly reported as a failure via the
+# health check, not silently swallowed.
 restore_user_path() {
-  local systemctl_bin="$1" sudo_bin="$2" use_sudo_flag="$3" loginctl_bin="$4" linger_user="$5" local_url="$6"
+  local systemctl_bin="$1" use_sudo_flag="$2" sudo_bin="$3" loginctl_bin="$4" linger_user="$5" local_url="$6"
   shift 6
-  local -a active_user_units=("$@")
+  local -a active_user_units=()
+  [[ "$#" -gt 0 ]] && active_user_units=("$@")
   local unit
 
   for unit in "${SERVICE_UNITS[@]}"; do
@@ -985,9 +1044,11 @@ restore_user_path() {
     log_error recovery "re-enabling linger failed during --user restore (continuing to restart the --user units regardless)"
   fi
 
-  for unit in "${active_user_units[@]}"; do
-    restore_user_unit "$systemctl_bin" "$unit" || true
-  done
+  if [[ "${#active_user_units[@]}" -gt 0 ]]; then
+    for unit in "${active_user_units[@]}"; do
+      restore_user_unit "$systemctl_bin" "$unit" || true
+    done
+  fi
 
   if health_check_local "$local_url"; then
     log_info "recovery: the --user path is serving again (local health check passed): ${local_url}"
@@ -1037,33 +1098,53 @@ cmd_apply() {
     return 12
   fi
 
-  # Gap 1: capture which --user units are active (for a possible restore),
-  # then tear them down and disable linger. This is the last step before the
-  # system unit starts, so there is never a window with two binders on the
-  # port.
+  # Gap 1: capture which --user units are ACTIVE (not merely present in
+  # OPENBRAIN_DS_USER_SYSTEMD_DIR: an active unit whose file lives elsewhere
+  # must still be captured, or the recovery path below would not know to
+  # restore it: see teardown_user_unit's comment, Wren MEDIUM), then tear
+  # them down and disable linger. This is the last step before the system
+  # unit starts, so there is never a window with two binders on the port.
   local -a active_user_units=()
   local user_web_was_active=0
   local u
   for u in "${SERVICE_UNITS[@]}"; do
-    if user_unit_present "$OPENBRAIN_DS_USER_SYSTEMD_DIR" "$u" \
-      && user_unit_is_active "$OPENBRAIN_DS_SYSTEMCTL" "$u"; then
+    if user_unit_is_active "$OPENBRAIN_DS_SYSTEMCTL" "$u"; then
       active_user_units+=("$u")
       [[ "$u" == "$PRIMARY_UNIT" ]] && user_web_was_active=1
     fi
   done
 
+  # A failure tearing down the --user units or disabling linger happens
+  # AFTER the --user web may have already been stopped (partway through
+  # teardown_user_units) and BEFORE the system unit is up, so nothing may
+  # be serving 127.0.0.1:10203 at this point. Both failure sites below
+  # route through the same health-gated restore_user_path the
+  # cutover-health-check branch uses further down, so the backend's actual
+  # state is always verified and signaled: exit 15 when the restore brings
+  # the --user path back healthy, exit 14 when it does not (the memory
+  # backend may be DOWN). Neither site discards restore_user_path's result
+  # with `|| true` and neither returns a bare, unsignaled exit: that
+  # discarded-result pattern was exactly the defect this fixes (Leon HIGH,
+  # Wren HIGH-1/HIGH-2, OB-068 review). Exit code 13 itself is retired from
+  # cmd_apply's output; see the header comment's exit-code table.
   if ! teardown_user_units "$OPENBRAIN_DS_SYSTEMCTL" "$OPENBRAIN_DS_USER_SYSTEMD_DIR"; then
-    log_error apply "tearing down the old --user units failed; attempting to restart any --user unit stopped this run so the backend keeps serving"
-    for u in "${active_user_units[@]}"; do
-      restore_user_unit "$OPENBRAIN_DS_SYSTEMCTL" "$u" || true
-    done
-    return 13
+    log_error apply "tearing down the old --user units failed; restoring the --user path so the backend keeps serving"
+    if restore_user_path "$OPENBRAIN_DS_SYSTEMCTL" "$use_sudo_flag" "$OPENBRAIN_DS_SUDO" "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$OPENBRAIN_DS_HEALTH_LOCAL_URL" "${active_user_units[@]}"; then
+      log_info "apply: restored the --user path after a teardown failure; the memory backend is serving again"
+      return 15
+    fi
+    log_error apply "the --user teardown failed AND restoring the --user path also failed; the memory backend may be DOWN. Manual intervention required: check 'systemctl --user status ${PRIMARY_UNIT}' and 'systemctl status ${PRIMARY_UNIT}'"
+    return 14
   fi
 
   if ! disable_linger "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$use_sudo_flag" "$OPENBRAIN_DS_SUDO"; then
     log_error apply "disabling linger failed after tearing down the --user units; restoring the --user path so the backend keeps serving"
-    restore_user_path "$OPENBRAIN_DS_SYSTEMCTL" "$OPENBRAIN_DS_SUDO" "$use_sudo_flag" "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$OPENBRAIN_DS_HEALTH_LOCAL_URL" "${active_user_units[@]}" || true
-    return 13
+    if restore_user_path "$OPENBRAIN_DS_SYSTEMCTL" "$use_sudo_flag" "$OPENBRAIN_DS_SUDO" "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$OPENBRAIN_DS_HEALTH_LOCAL_URL" "${active_user_units[@]}"; then
+      log_info "apply: restored the --user path after a linger-disable failure; the memory backend is serving again"
+      return 15
+    fi
+    log_error apply "disabling linger failed AND restoring the --user path also failed; the memory backend may be DOWN. Manual intervention required: check 'systemctl --user status ${PRIMARY_UNIT}' and 'systemctl status ${PRIMARY_UNIT}'"
+    return 14
   fi
 
   local cutover_status=0
@@ -1087,7 +1168,7 @@ cmd_apply() {
   # repoint (no --user unit was active): roll back the binary version.
   if [[ "$user_web_was_active" -eq 1 ]]; then
     log_error apply "cutover to '${version:-latest}' failed after tearing down the live --user openbrain-web; restoring the --user path so the memory backend keeps serving"
-    if restore_user_path "$OPENBRAIN_DS_SYSTEMCTL" "$OPENBRAIN_DS_SUDO" "$use_sudo_flag" "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$OPENBRAIN_DS_HEALTH_LOCAL_URL" "${active_user_units[@]}"; then
+    if restore_user_path "$OPENBRAIN_DS_SYSTEMCTL" "$use_sudo_flag" "$OPENBRAIN_DS_SUDO" "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$OPENBRAIN_DS_HEALTH_LOCAL_URL" "${active_user_units[@]}"; then
       log_info "apply: restored the --user path; the memory backend is serving again on the old model; the system cutover to '${version:-latest}' did NOT go live"
       return 15
     fi
@@ -1097,6 +1178,12 @@ cmd_apply() {
 
   log_error apply "cutover to '${version:-latest}' failed (see the cutover error above for the failing stage); attempting automatic rollback"
 
+  # Leon MEDIUM (OB-068 review), documentation only: this is the
+  # steady-state repoint path with no --user unit ever active this run. If
+  # no previous binary version was ever recorded either (a first-ever apply
+  # on a box with nothing installed yet), there is no automatic recovery
+  # target: the operator must intervene manually. This is expected and
+  # accepted for that narrow case, not a gap to close here.
   if [[ -z "$previous_version" ]]; then
     log_error rollback "no previously-installed version was recorded; cannot auto-rollback. Manual intervention required: check 'systemctl status ${PRIMARY_UNIT}' and 'journalctl -u ${PRIMARY_UNIT} -n 100'"
     return 7
