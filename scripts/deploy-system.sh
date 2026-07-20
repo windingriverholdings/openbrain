@@ -85,12 +85,14 @@
 #      restarts each of the other three units ONLY if it was already
 #      active: an inactive secondary stays inactive, matching today's
 #      operational reality (only openbrain-web is normally up).
-#   8. Runs the two-tier health check: local http://127.0.0.1:10203/health,
-#      then, only if local passes, the remote https://openbrain.wr-s.net/mcp
-#      `initialize` POST. A remote connection failure (unreachable, not a
-#      genuine HTTP failure) is treated as "cannot confirm, not a rollback
-#      trigger" per the boundary-of-the-boundary discipline: a cloudflared
-#      outage is not the same defect class as a broken openbrain-web.
+#   8. Runs the two-tier health check: local http://127.0.0.1:10203/health
+#      (a JSON body carrying "status":"ok"), then, only if local passes, an
+#      AUTHENTICATED remote https://openbrain.wr-s.net/mcp `initialize` POST
+#      (bearer token read from the EnvironmentFile) expecting HTTP 200. A
+#      remote connection failure (unreachable, not a genuine HTTP failure) is
+#      treated as "cannot confirm, not a rollback trigger" per the
+#      boundary-of-the-boundary discipline: a cloudflared outage is not the
+#      same defect class as a broken openbrain-web.
 #   9. On success, enables the system unit(s) for boot (the counterpart to
 #      disabling linger in step 5): the primary always, plus any secondary
 #      that was active under --user. Doing this only after a healthy cutover,
@@ -796,11 +798,17 @@ restore_user_unit() {
 # ---------------------------------------------------------------------------
 
 # health_check_local runs the local /health probe and treats anything
-# other than a reachable "ok" body as a failure. Local has no
+# other than a reachable healthy body as a failure. Local has no
 # "unreachable but benign" tier the way the remote check does (there is no
 # cloudflared, no third-party network hop between this box and
 # 127.0.0.1): any failure here, whether a connection refusal or a non-2xx
 # response, is genuinely broken.
+#
+# The v0.8.x binary reports health as a JSON body carrying "status":"ok"
+# (for example {"auth_mode":{"mcp":"required","web":"required"},"status":"ok"}),
+# not the plain "ok" of the old v0.6.1 binary. Match the status field rather
+# than a brittle full-body compare, which false-negatived the healthy JSON
+# service and would have auto-rolled-back a good install.
 health_check_local() {
   local url="$1"
   local body
@@ -808,31 +816,81 @@ health_check_local() {
     return 1
   fi
   body="$(printf '%s' "$body" | tr -d '[:space:]')"
-  [[ "$body" == "ok" ]]
+  [[ "$body" == *'"status":"ok"'* ]]
 }
 
-# health_check_remote POSTs a minimal MCP `initialize` request and reports
-# three distinct outcomes via its exit code, so the caller can tell a
-# genuine failure apart from an unrelated tunnel outage:
-#   0  reachable and returned HTTP 200
-#   1  reachable but returned a non-200 status: a genuine failure
+# read_mcp_token extracts the MCP bearer token (OPENBRAIN_MCP_AUTH_TOKEN)
+# from the system units' EnvironmentFile, so health_check_remote can send an
+# authenticated initialize. Returns the raw token on stdout, or non-zero
+# with no output when the file is unreadable or the key is absent/empty.
+#
+# Secret hygiene: the token is only ever emitted on this function's stdout,
+# which health_check_remote pipes straight into curl via stdin. It never
+# reaches argv and is never logged.
+read_mcp_token() {
+  local env_file="$1"
+  local value
+  if [[ ! -r "$env_file" ]]; then
+    return 1
+  fi
+  value="$(grep -E '^[[:space:]]*OPENBRAIN_MCP_AUTH_TOKEN=' "$env_file" | tail -n1)" || true
+  if [[ -z "$value" ]]; then
+    return 1
+  fi
+  value="${value#*=}"
+  # Strip a single matched pair of surrounding quotes, if present.
+  value="${value%\"}"; value="${value#\"}"
+  value="${value%\'}"; value="${value#\'}"
+  if [[ -z "$value" ]]; then
+    return 1
+  fi
+  printf '%s' "$value"
+}
+
+# health_check_remote POSTs an AUTHENTICATED MCP `initialize` request and
+# reports three distinct outcomes via its exit code, so the caller can tell
+# a genuine failure apart from an unrelated tunnel outage:
+#   0  reachable and returned HTTP 200 to the authenticated request
+#   1  a genuine failure: reachable but returned a non-200 status (including
+#      a 401 auth-config regression or an OB-054-class 403 host rejection),
+#      or the bearer token could not be read (fail closed)
 #   2  unreachable (curl itself could not complete the request): treat as
 #      remote-unreachable, not a genuine failure, per the
 #      boundary-of-the-boundary discipline: a cloudflared outage is not
 #      the same defect class as a broken openbrain-web.
 #
-# Deliberately does NOT pass -f/--fail to curl: that would make ANY
-# 4xx/5xx response exit non-zero, indistinguishable from a genuine
-# transport failure. Reachability and HTTP status are checked separately:
-# curl_status says whether the request completed at all; http_code says
-# what the server answered once it did.
+# Sending a real bearer token (rather than an unauthenticated probe) is the
+# OB-054-aligned choice: the endpoint requires auth and answers an
+# unauthenticated initialize with 401, so a bare unauth probe could never
+# see 200 and always tripped rollback. An authenticated probe actually
+# verifies the tunnel, the auth path, and the app serve in one shot, and
+# still catches a host rejection or an auth regression that a bare
+# 401-accept would have masked.
+#
+# The token is read from the EnvironmentFile and piped to curl over stdin
+# (-H @-), so it never appears on argv. Deliberately does NOT pass -f/--fail
+# to curl: that would make ANY 4xx/5xx response exit non-zero,
+# indistinguishable from a genuine transport failure. Reachability and HTTP
+# status are checked separately: curl_status says whether the request
+# completed at all; http_code says what the server answered once it did.
 health_check_remote() {
   local url="$1"
+  local env_file="${2:-$OPENBRAIN_DS_ENV_FILE}"
   local payload='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-06-18","capabilities":{},"clientInfo":{"name":"deploy-system-healthcheck","version":"1"}}}'
   local http_code=""
   local curl_status=0
+  local token=""
 
-  http_code="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "$payload" "$url" 2>/dev/null)" || curl_status=$?
+  if ! token="$(read_mcp_token "$env_file")"; then
+    log_error healthcheck "could not read the MCP auth token from ${env_file}; cannot verify the remote endpoint"
+    return 1
+  fi
+
+  http_code="$(printf 'Authorization: Bearer %s\n' "$token" \
+    | curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -X POST \
+        -H @- -H 'Content-Type: application/json' \
+        -H 'Accept: application/json, text/event-stream' \
+        -d "$payload" "$url" 2>/dev/null)" || curl_status=$?
 
   if [[ "$curl_status" -ne 0 ]]; then
     return 2
