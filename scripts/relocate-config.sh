@@ -6,7 +6,16 @@
 # owned by the run-as user, never committed to git.
 #
 # Usage:
-#   scripts/relocate-config.sh [SOURCE] [DEST]
+#   scripts/relocate-config.sh dry-run [SOURCE] [DEST]
+#   scripts/relocate-config.sh apply [SOURCE] [DEST]
+#
+#   dry-run Print exactly what apply would do (source, dest, mode 0600,
+#           owner) and write/execute NOTHING. No privilege check. This is the
+#           preview that lets the secret-config move be inspected before it
+#           runs, mirroring openknowledge's relocate-openknowledge-config.sh
+#           dry-run subcommand.
+#   apply   Perform the relocation: copy SOURCE to DEST atomically at mode
+#           0600, owned by the run-as user.
 #
 #   SOURCE  Optional path to the source env file. Default: the repo's own
 #           .env, resolved relative to this script's location.
@@ -274,10 +283,35 @@ relocate_config() {
   return 0
 }
 
+# dry_run prints exactly what apply would do and writes/executes nothing. It
+# performs NO privilege check and touches NO file: it reads only the SOURCE
+# path string and the configured owner, and prints the source, dest, mode
+# (always 0600), and owner. The secret's CONTENTS are never read or printed;
+# only the path is. This is the preview that makes the secret-config move
+# inspectable before it runs.
+dry_run() {
+  local source="$1" dest="$2" owner="$3"
+
+  cat <<EOF
+[relocate-config] DRY RUN: nothing below is written or executed; no privilege check performed.
+[relocate-config] would copy source: ${source}
+[relocate-config]            to dest: ${dest}
+[relocate-config]               mode: 0600 (owner read/write only)
+[relocate-config]              owner: ${owner}
+EOF
+  return 0
+}
+
 usage() {
   cat <<'EOF'
 Usage:
-  relocate-config.sh [SOURCE] [DEST]
+  relocate-config.sh dry-run [SOURCE] [DEST]
+  relocate-config.sh apply [SOURCE] [DEST]
+
+  dry-run Print what apply would do (source, dest, mode 0600, owner) and
+          write/execute nothing. No privilege check.
+  apply   Copy SOURCE to DEST atomically at mode 0600, owned by the run-as
+          user.
 
   SOURCE  Path to the source env file. Default: the repo's own .env.
   DEST    Path to the destination env file. Default:
@@ -286,10 +320,32 @@ EOF
 }
 
 main() {
-  local source="${1:-$DEFAULT_SOURCE}"
-  local dest="${2:-$DEFAULT_DEST}"
+  local cmd="${1:-}"
 
-  relocate_config "$source" "$dest" "$OPENBRAIN_RELOCATE_OWNER" "$OPENBRAIN_RELOCATE_SUDO"
+  case "$cmd" in
+    -h | --help)
+      usage
+      return 0
+      ;;
+    "")
+      log_error usage "a command is required (dry-run or apply)"
+      usage >&2
+      return 1
+      ;;
+    dry-run)
+      dry_run "${2:-$DEFAULT_SOURCE}" "${3:-$DEFAULT_DEST}" "$OPENBRAIN_RELOCATE_OWNER"
+      return $?
+      ;;
+    apply)
+      relocate_config "${2:-$DEFAULT_SOURCE}" "${3:-$DEFAULT_DEST}" "$OPENBRAIN_RELOCATE_OWNER" "$OPENBRAIN_RELOCATE_SUDO"
+      return $?
+      ;;
+    *)
+      log_error usage "unrecognized command '${cmd}' (expected dry-run or apply)"
+      usage >&2
+      return 1
+      ;;
+  esac
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
