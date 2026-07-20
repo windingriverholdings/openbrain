@@ -623,6 +623,62 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "read_mcp_token and health_check_remote fail closed when the token key is absent from an otherwise-readable env file" {
+  # The real-world first-cutover state: /etc/openbrain/openbrain.env exists
+  # and is readable, but was populated before OPENBRAIN_MCP_AUTH_TOKEN was
+  # ever set (relocate-config.sh ran before the key was added, or the key
+  # was dropped by hand). This is a READABLE file, distinct from the
+  # already-covered unreadable/missing-file case.
+  local absent_env="${WORK_DIR}/absent-token.env"
+  printf 'OPENBRAIN_DB_PASSWORD=hunter2\n' > "$absent_env"
+
+  run bash -c "source '$SCRIPT'; read_mcp_token '${absent_env}'"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+  curl_plan "${WORK_DIR}/remote.plan" 200
+
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$absent_env" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 1 ]
+
+  # Mutation check: if read_mcp_token were changed to treat an absent key as
+  # success (e.g. printing an empty token and returning 0), the assertion
+  # above would fail. write_fake_curl's remote branch treats ANY stdin
+  # containing "Authorization:"/"Bearer" as authenticated, including an
+  # empty-valued header, and would answer the planned 200, turning this
+  # into a silent pass instead of the required genuine-failure (1).
+}
+
+@test "read_mcp_token and health_check_remote fail closed when the token key is present but empty" {
+  # The other real-world first-cutover state: the key exists in the file
+  # but was never assigned a value (a template placeholder left blank, or a
+  # provisioning step that writes the key before the secret).
+  local empty_env="${WORK_DIR}/empty-token.env"
+  printf 'OPENBRAIN_DB_PASSWORD=hunter2\nOPENBRAIN_MCP_AUTH_TOKEN=\n' > "$empty_env"
+
+  run bash -c "source '$SCRIPT'; read_mcp_token '${empty_env}'"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+  curl_plan "${WORK_DIR}/remote.plan" 200
+
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$empty_env" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 1 ]
+
+  # Same mutation check as the absent-key case above, for the empty-value
+  # branch of read_mcp_token's fail-closed guard.
+}
+
 @test "run_health_check distinguishes local-healthy-remote-unreachable (2) from a genuine failure (1) and full pass (0)" {
   local fake_bin="${WORK_DIR}/fakebin"
   mkdir -p "$fake_bin"
