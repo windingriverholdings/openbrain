@@ -1050,6 +1050,15 @@ EOF
   [[ "$output" == *"relocate-config.sh"* ]]
 }
 
+@test "check_env_file_present fails closed with a distinct message when the file exists but is empty" {
+  local empty_env="${WORK_DIR}/empty.env"
+  : > "$empty_env"
+  run bash -c "source '$SCRIPT'; check_env_file_present '${empty_env}'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is empty"* ]]
+  [[ "$output" == *"relocate-config.sh"* ]]
+}
+
 # --- install_base_unit / install_base_units (Gap 2) ---------------------
 
 @test "install_base_unit installs the shipped unit file at mode 0644" {
@@ -1136,7 +1145,7 @@ EOF
 
 # --- teardown_user_unit / teardown_user_units (Gap 1) --------------------
 
-@test "teardown_user_unit is a no-op when no --user unit file is present" {
+@test "teardown_user_unit is a no-op (no disable issued) when no --user unit file is present and it is not active" {
   local fake_bin="${WORK_DIR}/fakebin"
   mkdir -p "$fake_bin"
   local log="${WORK_DIR}/systemctl.log"
@@ -1145,7 +1154,29 @@ EOF
   run env PATH="${fake_bin}:${PATH}" \
     bash -c "source '$SCRIPT'; teardown_user_unit systemctl '${USER_SYSTEMD_DIR}' openbrain-web"
   [ "$status" -eq 0 ]
-  [ ! -f "$log" ]
+  # Absence check now falls back to an is-active query (Gap 1 fix, OB-068
+  # review), so the log may contain that query, but never an actual
+  # disable: the no-op contract is "nothing torn down," not "systemctl
+  # never invoked."
+  if [ -f "$log" ]; then
+    run cat "$log"
+    [[ "$output" != *"disable --now"* ]]
+  fi
+}
+
+@test "teardown_user_unit detects and disables a --user unit that is ACTIVE but whose unit file lives outside OPENBRAIN_DS_USER_SYSTEMD_DIR" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  local log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$log"
+  # Deliberately no write_user_unit_file call: USER_SYSTEMD_DIR stays empty,
+  # so user_unit_present is false. Only is-active makes this unit visible.
+
+  run env PATH="${fake_bin}:${PATH}" FAKE_USER_ACTIVE_openbrain_web_service=active \
+    bash -c "source '$SCRIPT'; teardown_user_unit systemctl '${USER_SYSTEMD_DIR}' openbrain-web"
+  [ "$status" -eq 0 ]
+  run cat "$log"
+  [[ "$output" == *"--user disable --now openbrain-web.service"* ]]
 }
 
 @test "teardown_user_unit disables an existing --user unit even if currently inactive" {
@@ -1175,7 +1206,7 @@ EOF
   [[ "$output" == *"failed to stop and disable"* ]]
 }
 
-@test "teardown_user_units tears down every --user unit that is present, skipping the absent ones" {
+@test "teardown_user_units tears down every --user unit that is present or active, and issues no disable for the rest" {
   write_user_unit_file "$USER_SYSTEMD_DIR" openbrain-web
   write_user_unit_file "$USER_SYSTEMD_DIR" openbrain-watchd
   local fake_bin="${WORK_DIR}/fakebin"
@@ -1189,8 +1220,10 @@ EOF
   run cat "$log"
   [[ "$output" == *"--user disable --now openbrain-web.service"* ]]
   [[ "$output" == *"--user disable --now openbrain-watchd.service"* ]]
-  [[ "$output" != *"openbrain-telegram"* ]]
-  [[ "$output" != *"openbrain-slack"* ]]
+  # openbrain-telegram/openbrain-slack are neither present in the dir nor
+  # active, so they may show up as an is-active query but never a disable.
+  [[ "$output" != *"disable --now openbrain-telegram.service"* ]]
+  [[ "$output" != *"disable --now openbrain-slack.service"* ]]
 }
 
 # --- linger_enabled / disable_linger / enable_linger ---------------------
@@ -1604,6 +1637,190 @@ EOF
   [ "$status" -eq 14 ]
   [[ "$output" == *"may be DOWN"* ]]
   [[ "$output" == *"Manual intervention required"* ]]
+}
+
+# --- exit 14/15 at the OTHER two recovery sites: --user teardown failure ---
+# --- and linger-disable failure (OB-068 review fix: these used to return  ---
+# --- a bare, unsignaled exit 13 via `restore_user_path ... || true`)      ---
+
+@test "cmd_apply exit 15: --user teardown fails, restore succeeds, and the restore attempt is logged (not swallowed)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_sudo "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+  write_user_unit_file "$USER_SYSTEMD_DIR" openbrain-web
+  # Only restore_user_path's own confirmation probe runs a curl call here:
+  # do_cutover is never reached because teardown fails before it.
+  curl_plan "${WORK_DIR}/local.plan" ok
+
+  run env "${DS_ENV[@]}" PATH="$fake_bin:$PATH" OPENBRAIN_DS_EUID=0 \
+    FAKE_USER_ACTIVE_openbrain_web_service=active FAKE_SYSTEMCTL_USER_DISABLE_EXIT=1 \
+    OPENBRAIN_DS_INSTALL_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_DS_SYSTEMD_DIR='${SYSTEMD_DIR}'
+      cmd_apply v0.8.0
+    "
+  [ "$status" -eq 15 ]
+  [[ "$output" == *"tearing down the old --user units failed"* ]]
+  [[ "$output" == *"restored the --user path after a teardown failure"* ]]
+
+  run cat "$systemctl_log"
+  # The restore attempt actually fired: the --user unit was re-enabled and
+  # restarted, not just logged-and-forgotten.
+  [[ "$output" == *"--user enable --now openbrain-web.service"* ]]
+}
+
+@test "cmd_apply exit 14: --user teardown fails, restore does NOT come back healthy, and the failure is surfaced not swallowed" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_sudo "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+  write_user_unit_file "$USER_SYSTEMD_DIR" openbrain-web
+  curl_plan "${WORK_DIR}/local.plan" fail
+
+  run env "${DS_ENV[@]}" PATH="$fake_bin:$PATH" OPENBRAIN_DS_EUID=0 \
+    FAKE_USER_ACTIVE_openbrain_web_service=active FAKE_SYSTEMCTL_USER_DISABLE_EXIT=1 \
+    OPENBRAIN_DS_INSTALL_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_DS_SYSTEMD_DIR='${SYSTEMD_DIR}'
+      cmd_apply v0.8.0
+    "
+  [ "$status" -eq 14 ]
+  [[ "$output" == *"tearing down the old --user units failed"* ]]
+  [[ "$output" == *"the --user teardown failed AND restoring the --user path also failed"* ]]
+  [[ "$output" == *"may be DOWN"* ]]
+  [[ "$output" == *"Manual intervention required"* ]]
+  # This is the critical, previously-untested regression: a genuine 13-site
+  # failure must NEVER exit 13 (which used to be returned unconditionally
+  # via `|| true`, discarding the restore's own result). It must resolve to
+  # 14 here, never a bare/benign exit.
+  [ "$status" -ne 13 ]
+
+  run cat "$systemctl_log"
+  # The restore attempt still fired even though it ultimately failed: not
+  # swallowed, just unsuccessful (Tess LOW / Wren).
+  [[ "$output" == *"--user enable --now openbrain-web.service"* ]]
+}
+
+@test "cmd_apply exit 15: linger-disable fails after a successful --user teardown, restore succeeds and is logged" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_sudo "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+  write_user_unit_file "$USER_SYSTEMD_DIR" openbrain-web
+  curl_plan "${WORK_DIR}/local.plan" ok
+
+  run env "${DS_ENV[@]}" PATH="$fake_bin:$PATH" OPENBRAIN_DS_EUID=0 \
+    FAKE_USER_ACTIVE_openbrain_web_service=active \
+    FAKE_LINGER_STATE=yes FAKE_LOGINCTL_EXIT=1 \
+    OPENBRAIN_DS_INSTALL_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_DS_SYSTEMD_DIR='${SYSTEMD_DIR}'
+      cmd_apply v0.8.0
+    "
+  [ "$status" -eq 15 ]
+  [[ "$output" == *"disabling linger failed after tearing down the --user units"* ]]
+  [[ "$output" == *"restored the --user path after a linger-disable failure"* ]]
+
+  run cat "$systemctl_log"
+  [[ "$output" == *"--user enable --now openbrain-web.service"* ]]
+}
+
+@test "cmd_apply exit 14: linger-disable fails, restore does NOT come back healthy, and the failure is surfaced not swallowed" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_sudo "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+  write_user_unit_file "$USER_SYSTEMD_DIR" openbrain-web
+  curl_plan "${WORK_DIR}/local.plan" fail
+
+  run env "${DS_ENV[@]}" PATH="$fake_bin:$PATH" OPENBRAIN_DS_EUID=0 \
+    FAKE_USER_ACTIVE_openbrain_web_service=active \
+    FAKE_LINGER_STATE=yes FAKE_LOGINCTL_EXIT=1 \
+    OPENBRAIN_DS_INSTALL_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_DS_SYSTEMD_DIR='${SYSTEMD_DIR}'
+      cmd_apply v0.8.0
+    "
+  [ "$status" -eq 14 ]
+  [[ "$output" == *"disabling linger failed AND restoring the --user path also failed"* ]]
+  [[ "$output" == *"may be DOWN"* ]]
+  [ "$status" -ne 13 ]
+
+  run cat "$systemctl_log"
+  [[ "$output" == *"--user enable --now openbrain-web.service"* ]]
+}
+
+# --- Gap 1 fix integration: is-active detection catches a unit whose file ---
+# --- lives outside OPENBRAIN_DS_USER_SYSTEMD_DIR (Wren MEDIUM)            ---
+
+@test "cmd_apply detects and tears down an ACTIVE --user openbrain-web whose unit file lives outside OPENBRAIN_DS_USER_SYSTEMD_DIR" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_sudo "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+  # Deliberately no write_user_unit_file call: USER_SYSTEMD_DIR (from setup)
+  # stays empty. Only is-active makes this --user unit visible to cmd_apply.
+  curl_plan "${WORK_DIR}/local.plan" fail ok
+  curl_plan "${WORK_DIR}/remote.plan" 200
+
+  run env "${DS_ENV[@]}" PATH="$fake_bin:$PATH" OPENBRAIN_DS_EUID=0 \
+    FAKE_USER_ACTIVE_openbrain_web_service=active \
+    OPENBRAIN_DS_INSTALL_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_DS_SYSTEMD_DIR='${SYSTEMD_DIR}'
+      cmd_apply v0.8.0
+    "
+  # The system cutover's health check fails (local.plan first entry "fail"),
+  # and because the active-but-file-absent --user unit WAS captured and torn
+  # down, this resolves as a first-cutover recovery (restore succeeds on the
+  # local.plan's second entry "ok"), not a steady-state binary rollback.
+  [ "$status" -eq 15 ]
+  [[ "$output" == *"restoring the --user path"* ]]
+
+  run cat "$systemctl_log"
+  [[ "$output" == *"--user disable --now openbrain-web.service"* ]]
 }
 
 @test "cmd_apply steady-state repoint still rolls back the binary version on health failure (exit 10), unaffected by the new --user recovery branch" {
