@@ -42,13 +42,30 @@
 #      restart require root or sudo. Fails closed with a clear message if
 #      neither is available. dry-run needs no privilege at all: it only
 #      prints, never executes or writes.
-#   2. Installs VERSION (or latest) via the Phase 2 installer
+#   2. Config-precedes-start preflight: the system openbrain-web has
+#      EnvironmentFile=/etc/openbrain/openbrain.env and will not start until
+#      that file exists. This is checked BEFORE anything is torn down, so a
+#      missing config never leaves the memory backend dead (relocate the
+#      config first with scripts/relocate-config.sh).
+#   3. Installs VERSION (or latest) via the Phase 2 installer
 #      (scripts/install-release.sh), reused as-is: checksum verification,
 #      the self-identifying-binary version check, and the atomic install
 #      are the installer's job, not reimplemented here. The binary is
 #      ALWAYS installed before any unit is repointed at it (install before
 #      activate).
-#   3. Writes an ExecStart-only systemd drop-in for EACH of the four units
+#   4. Installs the four shipped base unit files (deploy/openbrain-*.service)
+#      to /etc/systemd/system/ (Gap 2). An ExecStart drop-in has nothing to
+#      attach to without a base unit; without this step the drop-in plus a
+#      system-scope restart fails "unit not found". Idempotent and atomic,
+#      same discipline as the drop-in write. Done BEFORE any --user teardown
+#      so a failure here leaves the old --user units still serving.
+#   5. Old --user teardown (Gap 1): captures which --user units are active
+#      (for rollback), stops and disables the four --user units, and disables
+#      linger. This is the LAST step before the system unit starts, so there
+#      is never a window with two binders on 127.0.0.1:10203. Every part is
+#      idempotent: an already-stopped --user unit and already-disabled linger
+#      are no-ops, not errors.
+#   6. Writes an ExecStart-only systemd drop-in for EACH of the four units
 #      (<unit>.service.d/override.conf under /etc/systemd/system/). The
 #      shipped unit files are NEVER edited in place. Every other directive
 #      (EnvironmentFile, ReadWritePaths, ProtectSystem, User, etc.) is
@@ -56,24 +73,34 @@
 #      bare `ExecStart=` reset (systemd APPENDS ExecStart= across drop-ins
 #      unless the list is cleared first) followed by the new `ExecStart=`
 #      line.
-#   4. `systemctl daemon-reload` once, then restarts openbrain-web (the
+#   7. `systemctl daemon-reload` once, then restarts openbrain-web (the
 #      primary unit the health check depends on) unconditionally, and
 #      restarts each of the other three units ONLY if it was already
 #      active: an inactive secondary stays inactive, matching today's
 #      operational reality (only openbrain-web is normally up).
-#   5. Runs the two-tier health check: local http://127.0.0.1:10203/health,
+#   8. Runs the two-tier health check: local http://127.0.0.1:10203/health,
 #      then, only if local passes, the remote https://openbrain.wr-s.net/mcp
 #      `initialize` POST. A remote connection failure (unreachable, not a
 #      genuine HTTP failure) is treated as "cannot confirm, not a rollback
 #      trigger" per the boundary-of-the-boundary discipline: a cloudflared
 #      outage is not the same defect class as a broken openbrain-web.
-#   6. On a genuine health-check failure: reinstalls whichever version was
-#      active before this apply (captured before the new version was
-#      installed) via the same Phase 2 installer, repoints/restarts, and
-#      re-checks health exactly once more. A second failure is a loud,
-#      actionable error; this tool never restart-loops trying to recover
-#      on its own. At most one cutover attempt and at most one automatic
-#      rollback attempt per apply.
+#   9. On success, enables the system unit(s) for boot (the counterpart to
+#      disabling linger in step 5): the primary always, plus any secondary
+#      that was active under --user. Doing this only after a healthy cutover,
+#      and only after the --user linger boot mechanism was disabled, means
+#      the box never has two boot mechanisms binding the same port.
+#  10. On a genuine health-check failure the recovery depends on whether this
+#      run tore down a live --user openbrain-web:
+#        - FIRST cutover (a --user openbrain-web was active): restores the
+#          --user path (stops+disables the system units to free the port,
+#          re-enables linger, re-enables and starts the previously-active
+#          --user units) so the memory backend keeps serving on the old
+#          model. Fail toward "the old thing still serves."
+#        - STEADY-STATE repoint (no --user unit was active): reinstalls
+#          whichever version was active before this apply and repoints/
+#          restarts/re-checks health exactly once more, same as before.
+#      At most one cutover attempt and at most one automatic recovery attempt
+#      per apply; this tool never restart-loops.
 #
 # What "rollback VERSION" does: installs VERSION via the same idempotent
 # Phase 2 installer, then runs the same drop-in/reload/restart/
@@ -107,6 +134,24 @@
 #      healthy again), but the originally requested version never became
 #      live: this run did not achieve its goal even though the service
 #      recovered
+#  11  config-precedes-start preflight failed: the EnvironmentFile
+#      (/etc/openbrain/openbrain.env) does not exist. Nothing was torn down
+#      or changed; relocate the config first (scripts/relocate-config.sh)
+#  12  base system unit install failed (apply path): nothing was torn down,
+#      the --user units are left serving
+#  13  old --user teardown or linger-disable failed (apply path): a
+#      best-effort restore of any --user unit stopped this run is attempted
+#      before returning
+#  14  FIRST-cutover recovery: the system cutover failed AND restoring the
+#      --user path also failed. The memory backend may be DOWN; manual
+#      intervention required
+#  15  FIRST-cutover recovery SUCCEEDED: the system cutover failed, but the
+#      previously-active --user path was restored and is serving again. The
+#      requested system cutover did NOT go live
+#  16  system cutover is live and healthy, but `systemctl enable` for boot
+#      persistence failed. The service runs now but will NOT start after a
+#      reboot until it is enabled by hand. The memory backend is serving; the
+#      failure is boot-persistence only
 #
 # Environment overrides (for testing; production runs with defaults):
 #   OPENBRAIN_REPO                   GitHub repo, default
@@ -128,6 +173,16 @@
 #                                     to exercise both the "already root"
 #                                     and "needs sudo" branches
 #                                     deterministically.
+#   OPENBRAIN_DS_ENV_FILE            EnvironmentFile the system units read,
+#                                     default /etc/openbrain/openbrain.env
+#   OPENBRAIN_DS_DEPLOY_DIR          Source of the four base unit files,
+#                                     default deploy/ next to this script
+#   OPENBRAIN_DS_USER_SYSTEMD_DIR    Where the old --user unit files live,
+#                                     default ~/.config/systemd/user
+#   OPENBRAIN_DS_LOGINCTL            loginctl binary, default loginctl
+#   OPENBRAIN_DS_LINGER_USER         User whose linger is disabled on cutover
+#                                     (re-enabled on rollback), default the
+#                                     invoking user
 #
 # Testability: every function is a pure, sourceable unit taking overridable
 # config and explicit arguments, so tests/deploy-system.bats sources this
@@ -156,6 +211,38 @@ OPENBRAIN_DS_EUID="${OPENBRAIN_DS_EUID:-$EUID}"
 # misbehaving previous binary cannot hang a cutover or rollback
 # indefinitely.
 OPENBRAIN_DS_VERSION_CHECK_TIMEOUT="${OPENBRAIN_DS_VERSION_CHECK_TIMEOUT:-5}"
+
+# The secret-bearing EnvironmentFile the system units read. The system
+# openbrain-web must NOT be started until this file exists (Config precedes
+# start): a system unit whose EnvironmentFile is absent fails to start, and
+# starting it after we have already torn down the --user unit would leave
+# the memory backend dead. cmd_apply/cmd_rollback fail closed before any
+# teardown when this file is missing. relocate-config.sh is what populates
+# it; this tool only checks presence, never reads or writes it.
+OPENBRAIN_DS_ENV_FILE="${OPENBRAIN_DS_ENV_FILE:-/etc/openbrain/openbrain.env}"
+# Source of the four shipped base unit files installed to the system
+# systemd dir (Gap 2: the ExecStart drop-in needs a base unit to attach
+# to). Defaults to the repo's deploy/ next to this script.
+OPENBRAIN_DS_DEPLOY_DIR="${OPENBRAIN_DS_DEPLOY_DIR:-${SCRIPT_DIR}/../deploy}"
+# Where the OLD systemd --user unit files live. Used only to detect whether
+# a --user unit is present to tear down (Gap 1): the teardown is a no-op for
+# a unit that was never installed as a --user service.
+OPENBRAIN_DS_USER_SYSTEMD_DIR="${OPENBRAIN_DS_USER_SYSTEMD_DIR:-${HOME}/.config/systemd/user}"
+# loginctl binary and the linger user, for disabling (cutover) and
+# re-enabling (rollback) linger. System units start at boot by being
+# enabled, so the old --user linger boot mechanism is disabled as part of
+# the cutover.
+OPENBRAIN_DS_LOGINCTL="${OPENBRAIN_DS_LOGINCTL:-loginctl}"
+# Guarded against a restricted PATH: this default is evaluated at SOURCE
+# TIME (every test that sources this file pays this cost, not just a
+# privileged production run), and under `set -euo pipefail` a bare
+# `$(id -un)` with `id` absent from PATH would abort sourcing entirely with
+# exit 127, before any function (including check_privilege) ever runs. The
+# `|| printf` fallback guarantees a zero exit status for the substitution
+# itself regardless of whether `id` is reachable, so a PATH-starved test
+# fixture (see tests/deploy-system.bats' "no privilege and no sudo on PATH"
+# cases) still sources cleanly.
+OPENBRAIN_DS_LINGER_USER="${OPENBRAIN_DS_LINGER_USER:-$(id -un 2>/dev/null || printf '%s' "${USER:-craig8}")}"
 
 SERVICE_UNITS=(openbrain-web openbrain-telegram openbrain-slack openbrain-watchd)
 PRIMARY_UNIT="openbrain-web"
@@ -304,6 +391,102 @@ write_drop_in() {
 }
 
 # ---------------------------------------------------------------------------
+# Config-precedes-start preflight
+# ---------------------------------------------------------------------------
+
+# check_env_file_present fails closed when the system units' EnvironmentFile
+# does not exist. It is checked BEFORE any --user teardown so a missing
+# config never leaves the memory backend dead: a system openbrain-web whose
+# EnvironmentFile is absent will not start, and starting it after the --user
+# unit has already been stopped would strand the backend. This tool only
+# checks presence; relocate-config.sh is what actually populates the file.
+check_env_file_present() {
+  local env_file="$1"
+  if [[ ! -f "$env_file" ]]; then
+    log_error preflight "the system units' EnvironmentFile does not exist: ${env_file}. Relocate the config first (scripts/relocate-config.sh), then re-run. Nothing was changed."
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Base system unit install (Gap 2)
+# ---------------------------------------------------------------------------
+
+# install_base_unit copies deploy/<unit>.service into the system systemd dir
+# so the ExecStart drop-in has a base unit to attach to. Idempotent (a
+# byte-identical target is left untouched, no mtime change) and atomic (temp
+# file in the destination dir, then a single rename), same discipline as
+# write_drop_in. Guarded explicitly throughout: invoked as
+# `install_base_unit ... || return 1` from install_base_units, which suspends
+# errexit for its whole body, so an unguarded copy/rename failure here would
+# otherwise be swallowed and the caller would proceed as if the base unit
+# were in place when it is not.
+install_base_unit() {
+  local systemd_dir="$1" deploy_dir="$2" unit="$3" use_sudo_flag="$4" sudo_bin="$5"
+  local -a priv=()
+  [[ "$use_sudo_flag" == "1" ]] && priv=("$sudo_bin")
+  local src="${deploy_dir}/${unit}.service"
+  local dst="${systemd_dir}/${unit}.service"
+
+  if [[ ! -f "$src" ]]; then
+    log_error baseunit "shipped unit file not found: ${src}"
+    return 1
+  fi
+
+  if [[ -f "$dst" ]] && cmp -s "$src" "$dst"; then
+    log_info "base unit for ${unit} already matches the shipped file (idempotent, no write): ${dst}"
+    return 0
+  fi
+
+  if ! "${priv[@]}" mkdir -p "$systemd_dir" 2>&1; then
+    log_error baseunit "failed to create ${systemd_dir} for ${unit}"
+    return 1
+  fi
+
+  local tmp_path
+  if ! tmp_path="$("${priv[@]}" mktemp "${systemd_dir}/.${unit}.service.XXXXXX" 2>&1)"; then
+    log_error baseunit "failed to create a temp file in ${systemd_dir} for ${unit}"
+    return 1
+  fi
+
+  if ! "${priv[@]}" tee "$tmp_path" < "$src" >/dev/null 2>&1; then
+    log_error baseunit "failed to stage ${src} into ${tmp_path} for ${unit}"
+    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+
+  if ! "${priv[@]}" chmod 0644 "$tmp_path" 2>&1; then
+    log_error baseunit "failed to set mode 0644 on ${tmp_path} for ${unit}"
+    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+
+  if ! "${priv[@]}" mv -f -- "$tmp_path" "$dst" 2>&1; then
+    log_error baseunit "atomic rename of ${tmp_path} to ${dst} failed for ${unit}"
+    "${priv[@]}" rm -f "$tmp_path" 2>/dev/null || true
+    return 1
+  fi
+
+  log_info "installed base unit for ${unit}: ${dst}"
+  return 0
+}
+
+# install_base_units installs all four base unit files. Returns non-zero on
+# the first failure; the caller maps that to exit code 12 and, crucially,
+# has torn nothing down yet, so the --user units are left serving.
+install_base_units() {
+  local systemd_dir="$1" deploy_dir="$2" use_sudo_flag="$3" sudo_bin="$4"
+  local unit
+  for unit in "${SERVICE_UNITS[@]}"; do
+    if ! install_base_unit "$systemd_dir" "$deploy_dir" "$unit" "$use_sudo_flag" "$sudo_bin"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # systemctl operations
 # ---------------------------------------------------------------------------
 
@@ -390,6 +573,177 @@ repoint_and_restart() {
     fi
   done
 
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Old --user teardown, linger, and system-unit enable/disable (Gap 1)
+# ---------------------------------------------------------------------------
+#
+# The --user operations run as the invoking user against that user's own
+# systemd bus and are therefore NEVER prefixed with sudo (sudo would target
+# root's user bus, not the operator's). This matches the migration sequence:
+# the operator runs this tool as the run-as user (craig8), and the tool
+# self-escalates with sudo only for the SYSTEM-scope operations. loginctl
+# linger changes DO need sudo (they touch /var/lib/systemd/linger).
+
+# user_unit_present reports whether a --user unit file exists to tear down.
+# The teardown is a no-op for a unit that was never installed as a --user
+# service, which is what keeps the whole step idempotent.
+user_unit_present() {
+  local user_systemd_dir="$1" unit="$2"
+  [[ -f "${user_systemd_dir}/${unit}.service" ]]
+}
+
+# user_unit_is_active reports the --user unit's active state via exit code.
+# A nonzero from `systemctl --user is-active` is expected state information,
+# not a failure to guard against; it is only ever called as an if-condition.
+user_unit_is_active() {
+  local systemctl_bin="$1" unit="$2"
+  "$systemctl_bin" --user is-active --quiet "${unit}.service"
+}
+
+# teardown_user_unit stops and disables one --user unit, but only if its
+# --user unit file is present (idempotent: nothing to tear down otherwise).
+# `disable --now` on an already-inactive, already-disabled unit is a no-op
+# success, so a second run converges. Guarded explicitly: called under
+# `teardown_user_units ... || return 13`, which suspends errexit.
+teardown_user_unit() {
+  local systemctl_bin="$1" user_systemd_dir="$2" unit="$3"
+
+  if ! user_unit_present "$user_systemd_dir" "$unit"; then
+    return 0
+  fi
+
+  if ! "$systemctl_bin" --user disable --now "${unit}.service" 2>&1; then
+    log_error teardown "failed to stop and disable the --user ${unit}"
+    return 1
+  fi
+  log_info "stopped and disabled the --user ${unit}"
+  return 0
+}
+
+# teardown_user_units tears down all four --user units. Returns non-zero on
+# the first failure (caller maps to exit 13).
+teardown_user_units() {
+  local systemctl_bin="$1" user_systemd_dir="$2"
+  local unit
+  for unit in "${SERVICE_UNITS[@]}"; do
+    if ! teardown_user_unit "$systemctl_bin" "$user_systemd_dir" "$unit"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# linger_enabled reports (via exit code) whether the user currently has
+# linger enabled. A failing `loginctl show-user` (no such user record, or
+# loginctl unavailable) is read as "not lingering", so disable_linger
+# no-ops rather than erroring in that case.
+linger_enabled() {
+  local loginctl_bin="$1" linger_user="$2"
+  "$loginctl_bin" show-user "$linger_user" 2>/dev/null | grep -q '^Linger=yes'
+}
+
+# disable_linger disables linger for the user, but only if it is currently
+# enabled (idempotent). Uses sudo for the system-scope loginctl change.
+# Guarded explicitly (called under `... || return 13`).
+disable_linger() {
+  local loginctl_bin="$1" linger_user="$2" use_sudo_flag="$3" sudo_bin="$4"
+  local -a priv=()
+  [[ "$use_sudo_flag" == "1" ]] && priv=("$sudo_bin")
+
+  if ! linger_enabled "$loginctl_bin" "$linger_user"; then
+    log_info "linger for ${linger_user} is not enabled (idempotent, no change)"
+    return 0
+  fi
+
+  if ! "${priv[@]}" "$loginctl_bin" disable-linger "$linger_user" 2>&1; then
+    log_error teardown "failed to disable linger for ${linger_user}"
+    return 1
+  fi
+  log_info "disabled linger for ${linger_user}"
+  return 0
+}
+
+# enable_system_unit enables one system unit for boot (idempotent: enabling
+# an already-enabled unit is a no-op success). This is the boot-start
+# counterpart to disabling --user linger and runs only after a healthy
+# cutover, so the box never has both boot mechanisms binding the port.
+# Guarded explicitly (called under `enable_system_boot ... || ...`).
+enable_system_unit() {
+  local systemctl_bin="$1" unit="$2" use_sudo_flag="$3" sudo_bin="$4"
+  local -a priv=()
+  [[ "$use_sudo_flag" == "1" ]] && priv=("$sudo_bin")
+
+  if ! "${priv[@]}" "$systemctl_bin" enable "${unit}.service" 2>&1; then
+    log_error enable "failed to enable ${unit} for boot"
+    return 1
+  fi
+  return 0
+}
+
+# enable_system_boot enables the primary unit plus each secondary named in
+# the extra arguments (the units that were active under --user). Returns
+# non-zero if any enable fails.
+enable_system_boot() {
+  local systemctl_bin="$1" use_sudo_flag="$2" sudo_bin="$3"
+  shift 3
+  local -a extra_units=("$@")
+  local unit
+
+  if ! enable_system_unit "$systemctl_bin" "$PRIMARY_UNIT" "$use_sudo_flag" "$sudo_bin"; then
+    return 1
+  fi
+  for unit in "${extra_units[@]}"; do
+    [[ "$unit" == "$PRIMARY_UNIT" ]] && continue
+    if ! enable_system_unit "$systemctl_bin" "$unit" "$use_sudo_flag" "$sudo_bin"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# stop_disable_system_unit stops and disables one system unit, used on
+# first-cutover recovery to free 127.0.0.1:10203 before the --user unit is
+# restarted. `disable --now` on an inactive/not-enabled unit is a no-op
+# success. Best-effort: a failure is logged but recovery continues, since
+# the whole point is to give the old path a chance to bind the port.
+stop_disable_system_unit() {
+  local systemctl_bin="$1" unit="$2" use_sudo_flag="$3" sudo_bin="$4"
+  local -a priv=()
+  [[ "$use_sudo_flag" == "1" ]] && priv=("$sudo_bin")
+
+  if ! "${priv[@]}" "$systemctl_bin" disable --now "${unit}.service" 2>&1; then
+    log_error recovery "could not stop/disable the system ${unit} while freeing the port (continuing recovery)"
+    return 1
+  fi
+  return 0
+}
+
+# enable_linger re-enables linger for the user (first-cutover recovery), so
+# the restored --user units start at boot again. Guarded explicitly.
+enable_linger() {
+  local loginctl_bin="$1" linger_user="$2" use_sudo_flag="$3" sudo_bin="$4"
+  local -a priv=()
+  [[ "$use_sudo_flag" == "1" ]] && priv=("$sudo_bin")
+
+  if ! "${priv[@]}" "$loginctl_bin" enable-linger "$linger_user" 2>&1; then
+    log_error recovery "could not re-enable linger for ${linger_user} during --user restore"
+    return 1
+  fi
+  return 0
+}
+
+# restore_user_unit re-enables and starts one --user unit (first-cutover
+# recovery). No sudo (user bus). Guarded explicitly.
+restore_user_unit() {
+  local systemctl_bin="$1" unit="$2"
+  if ! "$systemctl_bin" --user enable --now "${unit}.service" 2>&1; then
+    log_error recovery "could not re-enable and start the --user ${unit} during restore"
+    return 1
+  fi
+  log_info "restored the --user ${unit}"
   return 0
 }
 
@@ -530,8 +884,20 @@ dry_run_plan() {
   local systemd_dir="$1" install_dir="$2" version="$3"
   local unit path content
 
-  log_info "DRY RUN: no file will be written, no systemctl or curl command will be run, no privilege check performed"
+  log_info "DRY RUN: no file will be written, no systemctl, loginctl, or curl command will be run, no privilege check performed"
   log_info "target version: ${version:-latest (resolved at apply time)}"
+
+  log_info "would first verify the EnvironmentFile exists (config precedes start): ${OPENBRAIN_DS_ENV_FILE}"
+  log_info "would then install the base system units from ${OPENBRAIN_DS_DEPLOY_DIR} into ${systemd_dir} (Gap 2: the drop-in needs a base unit to attach to):"
+  for unit in "${SERVICE_UNITS[@]}"; do
+    log_info "  ${OPENBRAIN_DS_DEPLOY_DIR}/${unit}.service -> ${systemd_dir}/${unit}.service (mode 0644, idempotent)"
+  done
+
+  log_info "would then tear down the old --user units (Gap 1), for each --user unit present in ${OPENBRAIN_DS_USER_SYSTEMD_DIR} (dry-run does not query live state):"
+  for unit in "${SERVICE_UNITS[@]}"; do
+    log_info "  ${OPENBRAIN_DS_SYSTEMCTL} --user disable --now ${unit}.service"
+  done
+  log_info "would then disable linger, only if currently enabled: ${OPENBRAIN_DS_LOGINCTL} disable-linger ${OPENBRAIN_DS_LINGER_USER}"
 
   for unit in "${SERVICE_UNITS[@]}"; do
     path="$(drop_in_path "$systemd_dir" "$unit")"
@@ -547,7 +913,9 @@ dry_run_plan() {
     log_info "  ${OPENBRAIN_DS_SYSTEMCTL} restart ${unit}.service"
   done
   log_info "would then run the two-tier health check for ${PRIMARY_UNIT}: local ${OPENBRAIN_DS_HEALTH_LOCAL_URL}, remote ${OPENBRAIN_DS_HEALTH_REMOTE_URL}"
-  log_info "on a genuine health-check failure, apply would automatically reinstall and restart whichever version was active before this run, then re-check once more"
+  log_info "on success, would enable the system unit(s) for boot (counterpart to disabling linger): ${OPENBRAIN_DS_SYSTEMCTL} enable ${PRIMARY_UNIT}.service (plus any secondary that was active under --user)"
+  log_info "on a genuine health-check failure after a FIRST cutover (a --user openbrain-web was active), apply would restore the --user path (stop/disable the system units, re-enable linger, re-enable and start the previously-active --user units) so the memory backend keeps serving"
+  log_info "on a genuine health-check failure during a STEADY-STATE repoint (no --user unit was active), apply would automatically reinstall and restart whichever version was active before this run, then re-check once more"
 
   return 0
 }
@@ -591,17 +959,65 @@ cmd_dry_run() {
   return 0
 }
 
-# cmd_apply installs VERSION (or latest), repoints/restarts, and
-# health-checks. On a genuine health-check failure it automatically rolls
-# back to whatever version was installed immediately before this call
-# (captured BEFORE install_version overwrites it), then reports a loud,
-# actionable error if the rollback itself also fails, rather than looping.
-# At most one cutover attempt and at most one automatic rollback attempt.
+# restore_user_path is the FIRST-cutover recovery: the system cutover failed,
+# and this run had torn down a live --user openbrain-web, so nothing is
+# serving the memory backend. It frees 127.0.0.1:10203 by stopping and
+# disabling the system units, re-enables linger, re-enables and starts the
+# --user units that were active before teardown, and confirms the local
+# health endpoint answers again. Returns 0 when the --user path is serving
+# again, non-zero when it is not (the memory backend may be down).
+#
+# The system-unit free-the-port step is best-effort (a failure there is
+# logged but does not abort recovery): the goal is to give the old --user
+# path a chance to bind the port, and the health check at the end is the
+# authoritative signal of whether the backend recovered.
+restore_user_path() {
+  local systemctl_bin="$1" sudo_bin="$2" use_sudo_flag="$3" loginctl_bin="$4" linger_user="$5" local_url="$6"
+  shift 6
+  local -a active_user_units=("$@")
+  local unit
+
+  for unit in "${SERVICE_UNITS[@]}"; do
+    stop_disable_system_unit "$systemctl_bin" "$unit" "$use_sudo_flag" "$sudo_bin" || true
+  done
+
+  if ! enable_linger "$loginctl_bin" "$linger_user" "$use_sudo_flag" "$sudo_bin"; then
+    log_error recovery "re-enabling linger failed during --user restore (continuing to restart the --user units regardless)"
+  fi
+
+  for unit in "${active_user_units[@]}"; do
+    restore_user_unit "$systemctl_bin" "$unit" || true
+  done
+
+  if health_check_local "$local_url"; then
+    log_info "recovery: the --user path is serving again (local health check passed): ${local_url}"
+    return 0
+  fi
+
+  log_error recovery "the --user path did NOT come back healthy after restore: ${local_url}"
+  return 1
+}
+
+# cmd_apply is the cutover: config preflight, install the binary, install the
+# base system units (Gap 2), tear down the old --user units and disable linger
+# (Gap 1), repoint/restart, health-check, and enable for boot on success. On a
+# genuine health-check failure the recovery branch depends on whether this run
+# tore down a live --user openbrain-web (FIRST cutover, restore the --user
+# path) or not (STEADY-STATE repoint, roll back the binary version). At most
+# one cutover attempt and at most one automatic recovery attempt.
 cmd_apply() {
   local version="${1:-}"
 
   if ! check_privilege "$OPENBRAIN_DS_SUDO" "$OPENBRAIN_DS_EUID"; then
     return 2
+  fi
+
+  local use_sudo_flag
+  use_sudo_flag="$(use_sudo)"
+
+  # Config precedes start: refuse before anything is torn down.
+  if ! check_env_file_present "$OPENBRAIN_DS_ENV_FILE"; then
+    return 11
   fi
 
   local previous_version=""
@@ -613,11 +1029,70 @@ cmd_apply() {
     return 3
   fi
 
+  # Gap 2: the ExecStart drop-in needs a base unit at
+  # /etc/systemd/system/openbrain-<svc>.service to attach to. Done BEFORE any
+  # teardown so a failure here leaves the --user units still serving.
+  if ! install_base_units "$OPENBRAIN_DS_SYSTEMD_DIR" "$OPENBRAIN_DS_DEPLOY_DIR" "$use_sudo_flag" "$OPENBRAIN_DS_SUDO"; then
+    log_error apply "failed to install the base system units; nothing torn down, the --user units are left serving"
+    return 12
+  fi
+
+  # Gap 1: capture which --user units are active (for a possible restore),
+  # then tear them down and disable linger. This is the last step before the
+  # system unit starts, so there is never a window with two binders on the
+  # port.
+  local -a active_user_units=()
+  local user_web_was_active=0
+  local u
+  for u in "${SERVICE_UNITS[@]}"; do
+    if user_unit_present "$OPENBRAIN_DS_USER_SYSTEMD_DIR" "$u" \
+      && user_unit_is_active "$OPENBRAIN_DS_SYSTEMCTL" "$u"; then
+      active_user_units+=("$u")
+      [[ "$u" == "$PRIMARY_UNIT" ]] && user_web_was_active=1
+    fi
+  done
+
+  if ! teardown_user_units "$OPENBRAIN_DS_SYSTEMCTL" "$OPENBRAIN_DS_USER_SYSTEMD_DIR"; then
+    log_error apply "tearing down the old --user units failed; attempting to restart any --user unit stopped this run so the backend keeps serving"
+    for u in "${active_user_units[@]}"; do
+      restore_user_unit "$OPENBRAIN_DS_SYSTEMCTL" "$u" || true
+    done
+    return 13
+  fi
+
+  if ! disable_linger "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$use_sudo_flag" "$OPENBRAIN_DS_SUDO"; then
+    log_error apply "disabling linger failed after tearing down the --user units; restoring the --user path so the backend keeps serving"
+    restore_user_path "$OPENBRAIN_DS_SYSTEMCTL" "$OPENBRAIN_DS_SUDO" "$use_sudo_flag" "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$OPENBRAIN_DS_HEALTH_LOCAL_URL" "${active_user_units[@]}" || true
+    return 13
+  fi
+
   local cutover_status=0
   do_cutover "$OPENBRAIN_DS_SYSTEMD_DIR" "$OPENBRAIN_INSTALL_DIR" "$OPENBRAIN_DS_SYSTEMCTL" "$OPENBRAIN_DS_SUDO" "$OPENBRAIN_DS_HEALTH_LOCAL_URL" "$OPENBRAIN_DS_HEALTH_REMOTE_URL" "${version:-latest}" || cutover_status=$?
   if [[ "$cutover_status" -eq 0 ]]; then
     log_info "apply: version '${version:-latest}' is live and healthy"
+    # Enable for boot: the counterpart to disabling linger. Only after a
+    # healthy cutover and only after linger was disabled, so the box never
+    # has two boot mechanisms binding the same port. A failure here leaves a
+    # RUNNING, healthy service that will not survive a reboot until enabled by
+    # hand: surfaced distinctly (16), never treated as a silent success.
+    if ! enable_system_boot "$OPENBRAIN_DS_SYSTEMCTL" "$use_sudo_flag" "$OPENBRAIN_DS_SUDO" "${active_user_units[@]}"; then
+      log_error apply "version '${version:-latest}' is live and healthy, but enabling it for boot failed; it will NOT start after a reboot until you run: sudo systemctl enable ${PRIMARY_UNIT}.service"
+      return 16
+    fi
     return 0
+  fi
+
+  # Recovery. FIRST cutover (a live --user openbrain-web was torn down):
+  # restore the --user path so the memory backend keeps serving. STEADY-STATE
+  # repoint (no --user unit was active): roll back the binary version.
+  if [[ "$user_web_was_active" -eq 1 ]]; then
+    log_error apply "cutover to '${version:-latest}' failed after tearing down the live --user openbrain-web; restoring the --user path so the memory backend keeps serving"
+    if restore_user_path "$OPENBRAIN_DS_SYSTEMCTL" "$OPENBRAIN_DS_SUDO" "$use_sudo_flag" "$OPENBRAIN_DS_LOGINCTL" "$OPENBRAIN_DS_LINGER_USER" "$OPENBRAIN_DS_HEALTH_LOCAL_URL" "${active_user_units[@]}"; then
+      log_info "apply: restored the --user path; the memory backend is serving again on the old model; the system cutover to '${version:-latest}' did NOT go live"
+      return 15
+    fi
+    log_error apply "the system cutover failed AND restoring the --user path also failed; the memory backend may be DOWN. Manual intervention required: check 'systemctl --user status ${PRIMARY_UNIT}' and 'systemctl status ${PRIMARY_UNIT}'"
+    return 14
   fi
 
   log_error apply "cutover to '${version:-latest}' failed (see the cutover error above for the failing stage); attempting automatic rollback"
@@ -649,9 +1124,13 @@ cmd_apply() {
 }
 
 # cmd_rollback is the on-demand path: revert to an explicit prior version
-# regardless of current health. It reuses do_cutover so the
-# repoint/restart/health-check sequence is identical to the automatic
-# path. VERSION is required: on-demand rollback never guesses.
+# regardless of current health. This is a STEADY-STATE, system-model
+# operation (the --user units are already gone once the cutover has run), so
+# it does NOT tear down --user units or touch linger; it only reverts the
+# installed version. It still enforces config-precedes-start and ensures the
+# base units are present, because do_cutover writes a drop-in that must
+# attach to a base unit and restarts a unit that must have its EnvironmentFile.
+# VERSION is required: on-demand rollback never guesses.
 cmd_rollback() {
   local version="${1:-}"
 
@@ -664,10 +1143,22 @@ cmd_rollback() {
     return 2
   fi
 
+  local use_sudo_flag
+  use_sudo_flag="$(use_sudo)"
+
+  if ! check_env_file_present "$OPENBRAIN_DS_ENV_FILE"; then
+    return 11
+  fi
+
   log_info "rollback: installing requested version '${version}'"
   if ! install_version "$OPENBRAIN_REPO" "$OPENBRAIN_INSTALL_DIR" "$version" "$OPENBRAIN_DS_INSTALL_SCRIPT"; then
     log_error rollback "failed to install requested version '${version}'; units left untouched"
     return 3
+  fi
+
+  if ! install_base_units "$OPENBRAIN_DS_SYSTEMD_DIR" "$OPENBRAIN_DS_DEPLOY_DIR" "$use_sudo_flag" "$OPENBRAIN_DS_SUDO"; then
+    log_error rollback "failed to install the base system units; units left untouched"
+    return 12
   fi
 
   local cutover_status=0
@@ -691,21 +1182,26 @@ usage: deploy-system.sh dry-run [VERSION]
        deploy-system.sh apply [VERSION]
        deploy-system.sh rollback VERSION
 
-  dry-run   Print every drop-in path, its exact contents, and the exact
-            systemctl/curl commands apply would run. Writes nothing, runs
-            nothing, requires no privilege.
-  apply     Install VERSION (or the latest release), repoint the four
-            units' ExecStart via systemd drop-ins, reload/restart, and
-            check health (local + remote MCP initialize). Automatically
-            rolls back to the previously-installed version on a genuine
-            health-check failure.
+  dry-run   Print the config preflight, the base-unit install, the --user
+            teardown and linger-disable, every drop-in path and its exact
+            contents, and the exact systemctl/loginctl/curl commands apply
+            would run. Writes nothing, runs nothing, requires no privilege.
+  apply     Verify the EnvironmentFile exists (config precedes start),
+            install VERSION (or the latest release), install the four base
+            system units, tear down the old --user units and disable linger,
+            repoint each unit's ExecStart via a systemd drop-in,
+            reload/restart, check health (local + remote MCP initialize), and
+            enable for boot. On a genuine health-check failure it restores the
+            old --user path (first cutover) or rolls back the binary version
+            (steady-state repoint).
   rollback  Install the specified prior VERSION and repoint/restart/check
-            health. VERSION is required; on-demand rollback never guesses.
+            health on the system model. VERSION is required; on-demand
+            rollback never guesses.
 
-Repoints the four openbrain system units' ExecStart at the Phase 2
-installer's target via drop-in overrides; the shipped unit files are never
-edited in place. See the header comment in this file for the full
-contract.
+Converts the four openbrain services from systemd --user units to system
+units, relocating the ExecStart at the Phase 2 installer's target via drop-in
+overrides; the shipped unit files are installed as the base units and never
+edited in place. See the header comment in this file for the full contract.
 EOF
 }
 
