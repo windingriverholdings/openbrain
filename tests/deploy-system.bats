@@ -21,8 +21,11 @@ setup() {
   mkdir -p "$SYSTEMD_DIR" "$INSTALL_DIR"
 
   # A present EnvironmentFile so the config-precedes-start preflight passes.
+  # It also carries a fake MCP auth token so the authenticated remote health
+  # check can read a bearer credential from the same file the real system
+  # units use, mirroring production. The value is never a real secret.
   ENV_FILE="${WORK_DIR}/openbrain.env"
-  printf 'OPENBRAIN_DB_PASSWORD=hunter2\n' > "$ENV_FILE"
+  printf 'OPENBRAIN_DB_PASSWORD=hunter2\nOPENBRAIN_MCP_AUTH_TOKEN=faketoken-abc123\n' > "$ENV_FILE"
 
   # An EMPTY --user systemd dir: no --user unit is present to tear down, so
   # cmd_apply/cmd_rollback treat this as a STEADY-STATE run (never touching
@@ -170,7 +173,13 @@ EOF
 
 # write_fake_curl: same two-tier mock as OB-063's tests/repoint-unit.bats
 # (local vs remote distinguished by presence of -w; walks a plan file of
-# outcomes per call).
+# outcomes per call). Models the REAL v0.8.x contracts observed against the
+# live openbrain-web (OB-069):
+#   local  /health returns a JSON body carrying "status":"ok", not plain "ok"
+#   remote /mcp initialize returns 401 to an UNAUTHENTICATED request and the
+#          planned code (200 for a healthy authed initialize) once a bearer
+#          Authorization header is presented. The header arrives via stdin
+#          (curl -H @-), so the token never lands on argv.
 write_fake_curl() {
   local dir="$1"
   cat > "${dir}/curl" <<'EOF'
@@ -203,11 +212,27 @@ fi
 echo "$((idx + 1))" > "$counter_file"
 
 if [[ "$is_remote" == "1" ]]; then
+  # The bearer credential is passed via stdin (-H @-), so read it to decide
+  # whether this request is authenticated. An empty stdin models an
+  # unauthenticated call.
+  auth_present=0
+  stdin_data="$(cat 2>/dev/null || true)"
+  [[ "$stdin_data" == *"Authorization:"*"Bearer"* ]] && auth_present=1
+
+  # A transport failure happens before auth is ever evaluated.
+  if [[ "$line" == "unreachable" ]]; then
+    echo "curl: (7) fake connection refused" >&2
+    exit 7
+  fi
+
+  if [[ "$auth_present" == "0" ]]; then
+    # The real endpoint rejects an unauthenticated initialize with 401.
+    printf '401'
+    exit 0
+  fi
+
+  # Authenticated: the server answers with the planned HTTP code.
   case "$line" in
-    unreachable)
-      echo "curl: (7) fake connection refused" >&2
-      exit 7
-      ;;
     2??)
       printf '%s' "$line"
       exit 0
@@ -223,7 +248,7 @@ if [[ "$is_remote" == "1" ]]; then
 else
   case "$line" in
     ok)
-      printf 'ok'
+      printf '{"auth_mode":{"mcp":"required","web":"required"},"status":"ok"}'
       exit 0
       ;;
     *)
@@ -492,9 +517,11 @@ EOF
 }
 
 # --- health_check_local / health_check_remote / run_health_check ---------
-# (Same two-tier contract as OB-063's repoint-unit.sh; unchanged logic.)
+# Contracts validated against the live v0.8.x openbrain-web (OB-069): local
+# /health returns a JSON body carrying "status":"ok"; remote /mcp requires a
+# bearer token and returns 200 to an authenticated initialize.
 
-@test "health_check_local passes on a reachable 'ok' body" {
+@test "health_check_local passes on a reachable JSON body carrying status:ok" {
   local fake_bin="${WORK_DIR}/fakebin"
   mkdir -p "$fake_bin"
   write_fake_curl "$fake_bin"
@@ -506,28 +533,94 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "health_check_remote returns 0 on HTTP 200, 1 on reachable non-200, 2 when unreachable" {
+@test "health_check_local fails on a reachable body that lacks status:ok" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+  curl_plan "${WORK_DIR}/local.plan" fail
+
+  run env PATH="${fake_bin}:${PATH}" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    bash -c "source '$SCRIPT'; health_check_local http://127.0.0.1:10203/health"
+  [ "$status" -ne 0 ]
+}
+
+@test "health_check_remote returns 0 on authed HTTP 200, 1 on reachable non-200, 2 when unreachable" {
   local fake_bin="${WORK_DIR}/fakebin"
   mkdir -p "$fake_bin"
   write_fake_curl "$fake_bin"
 
   curl_plan "${WORK_DIR}/remote.plan" 200
-  run env PATH="${fake_bin}:${PATH}" \
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
     bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
   [ "$status" -eq 0 ]
 
   curl_plan "${WORK_DIR}/remote2.plan" 500
-  run env PATH="${fake_bin}:${PATH}" \
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote2.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote2.count" \
     bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
   [ "$status" -eq 1 ]
 
   curl_plan "${WORK_DIR}/remote3.plan" unreachable
-  run env PATH="${fake_bin}:${PATH}" \
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote3.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote3.count" \
     bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
   [ "$status" -eq 2 ]
+}
+
+@test "health_check_remote treats a 401 auth regression and a 403 host rejection as genuine failures" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+
+  # An authenticated initialize that still comes back 401 means the auth
+  # config regressed; that is a genuine failure, not a benign challenge.
+  curl_plan "${WORK_DIR}/remote.plan" 401
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 1 ]
+
+  # An OB-054-class host rejection (403 invalid Host header) is a genuine
+  # failure the bare-401-accept fallback would have masked.
+  curl_plan "${WORK_DIR}/remote2.plan" 403
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote2.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote2.count" \
+    bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 1 ]
+}
+
+@test "health_check_remote fails closed when the MCP auth token cannot be read" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+  curl_plan "${WORK_DIR}/remote.plan" 200
+
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="${WORK_DIR}/nope.env" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 1 ]
+}
+
+@test "health_check_remote does not place the bearer token on argv" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  # An argv-recording curl stub: capture every argument, answer 200.
+  cat > "${fake_bin}/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "${WORK_DIR}/curl-argv.log"
+cat >/dev/null 2>&1 || true
+printf '200'
+exit 0
+EOF
+  chmod +x "${fake_bin}/curl"
+
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    bash -c "source '$SCRIPT'; health_check_remote https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 0 ]
+  run grep -F 'faketoken-abc123' "${WORK_DIR}/curl-argv.log"
+  [ "$status" -ne 0 ]
 }
 
 @test "run_health_check distinguishes local-healthy-remote-unreachable (2) from a genuine failure (1) and full pass (0)" {
@@ -537,7 +630,7 @@ EOF
 
   curl_plan "${WORK_DIR}/local.plan" ok
   curl_plan "${WORK_DIR}/remote.plan" 200
-  run env PATH="${fake_bin}:${PATH}" \
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
     FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
     bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
@@ -545,7 +638,7 @@ EOF
 
   curl_plan "${WORK_DIR}/local2.plan" ok
   curl_plan "${WORK_DIR}/remote2.plan" unreachable
-  run env PATH="${fake_bin}:${PATH}" \
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
     FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local2.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local2.count" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote2.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote2.count" \
     bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
@@ -554,7 +647,7 @@ EOF
 
   curl_plan "${WORK_DIR}/local3.plan" fail
   curl_plan "${WORK_DIR}/remote3.plan" 200
-  run env PATH="${fake_bin}:${PATH}" \
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
     FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local3.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local3.count" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote3.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote3.count" \
     bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
