@@ -687,7 +687,11 @@ linger_enabled() {
 
 # disable_linger disables linger for the user, but only if it is currently
 # enabled (idempotent). Uses sudo for the system-scope loginctl change.
-# Guarded explicitly (called under `... || return 13`).
+# Guarded explicitly: cmd_apply calls this as `if ! disable_linger ...;
+# then ...`, and on failure routes recovery through restore_user_path,
+# resolving to exit 14 (restore failed, backend may be down) or exit 15
+# (restore succeeded), never exit 13 (retired; see the header comment's
+# exit-code table).
 disable_linger() {
   local loginctl_bin="$1" linger_user="$2" use_sudo_flag="$3" sudo_bin="$4"
   local -a priv=()
