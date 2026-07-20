@@ -197,19 +197,85 @@ EOF
   [[ "$output" == "-rw-------" ]]
 }
 
-# --- main / usage ------------------------------------------------------------
+# --- main apply / usage ------------------------------------------------------
 
-@test "main relocates using default SOURCE/DEST when both are omitted, given an overridden default" {
+@test "main apply relocates using the explicit SOURCE/DEST arguments" {
   # main's own DEFAULT_SOURCE/DEFAULT_DEST are computed once at source time
   # from SCRIPT_DIR; exercise the explicit two-arg form here (the common
   # path for tests) since overriding the compile-time defaults would
   # require re-sourcing with different SCRIPT_DIR plumbing.
-  run bash -c "source '$SCRIPT'; main '${SOURCE_ENV}' '${DEST_ENV}'"
+  run bash -c "source '$SCRIPT'; main apply '${SOURCE_ENV}' '${DEST_ENV}'"
   [ "$status" -eq 0 ]
   [ -f "$DEST_ENV" ]
 }
 
-@test "main propagates relocate_config's exit code on failure" {
-  run bash -c "source '$SCRIPT'; main '${WORK_DIR}/nope.env' '${DEST_ENV}'"
+@test "main apply propagates relocate_config's exit code on failure" {
+  run bash -c "source '$SCRIPT'; main apply '${WORK_DIR}/nope.env' '${DEST_ENV}'"
   [ "$status" -ne 0 ]
+}
+
+@test "main with no command is a usage error (exit 1) and writes nothing" {
+  run bash -c "source '$SCRIPT'; main"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a command is required"* ]]
+  [ ! -f "$DEST_ENV" ]
+}
+
+@test "main with an unrecognized command is a usage error (exit 1)" {
+  run bash -c "source '$SCRIPT'; main bogus"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unrecognized command 'bogus'"* ]]
+}
+
+@test "main --help prints usage and exits 0 without writing" {
+  run bash -c "source '$SCRIPT'; main --help"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
+  [[ "$output" == *"apply"* ]]
+  [ ! -f "$DEST_ENV" ]
+}
+
+# --- dry-run: previews source/dest/mode/owner, writes and runs nothing -------
+
+@test "dry-run prints source, dest, mode 0600, and owner, and writes no file" {
+  run bash -c "source '$SCRIPT'; main dry-run '${SOURCE_ENV}' '${DEST_ENV}'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DRY RUN"* ]]
+  [[ "$output" == *"no privilege check performed"* ]]
+  [[ "$output" == *"${SOURCE_ENV}"* ]]
+  [[ "$output" == *"${DEST_ENV}"* ]]
+  [[ "$output" == *"0600"* ]]
+  [[ "$output" == *"craig8"* ]]
+  [ ! -f "$DEST_ENV" ]
+}
+
+@test "dry-run never reads or prints the secret CONTENTS, only the path" {
+  # SOURCE_ENV contains OPENBRAIN_DB_PASSWORD=hunter2; the preview must not
+  # leak that value, it prints only the path string.
+  run bash -c "source '$SCRIPT'; main dry-run '${SOURCE_ENV}' '${DEST_ENV}'"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"hunter2"* ]]
+  [[ "$output" != *"abc123"* ]]
+}
+
+@test "dry-run previews even when the source does not exist and performs no privilege check or write" {
+  # Preview must work without touching the filesystem or checking privilege:
+  # even a nonexistent source and an unwritable dest dir with no sudo on PATH
+  # still prints and exits 0.
+  local empty_path="${WORK_DIR}/empty-path"
+  mkdir -p "$empty_path"
+  ln -s "$(command -v bash)" "${empty_path}/bash"
+  ln -s "$(command -v cat)" "${empty_path}/cat"
+
+  run env PATH="$empty_path" bash -c "source '$SCRIPT'; main dry-run '${WORK_DIR}/nope.env' '${DEST_ENV}'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DRY RUN"* ]]
+  [ ! -f "$DEST_ENV" ]
+}
+
+@test "dry-run uses OPENBRAIN_RELOCATE_OWNER for the previewed owner" {
+  run env OPENBRAIN_RELOCATE_OWNER=someuser \
+    bash -c "source '$SCRIPT'; main dry-run '${SOURCE_ENV}' '${DEST_ENV}'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"someuser"* ]]
 }
