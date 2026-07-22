@@ -323,6 +323,9 @@ def llm_label(cluster_thoughts: list[dict], cfg: dict, model: str) -> str | None
                 "model": model,
                 "prompt": prompt,
                 "stream": False,
+                # Region labels are short classification outputs; hidden
+                # chain-of-thought adds latency without improving the result.
+                "think": False,
                 # Fix temperature and seed so labels are stable across rebuilds
                 # when the underlying data hasn't changed.
                 "options": {"temperature": 0, "seed": 42},
