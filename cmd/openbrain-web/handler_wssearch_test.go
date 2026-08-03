@@ -217,6 +217,9 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	assert.Contains(t, page, "function appendSearchResults(")
 	assert.Contains(t, page, "function buildResultCard(")
 	assert.Contains(t, page, "results-empty")
+	assert.Contains(t, page, "score-tooltip")
+	assert.Contains(t, page, "semantic similarity (70%) and keyword matching (30%)")
+	assert.Contains(t, page, "score.setAttribute('aria-label', 'Relevance score '")
 
 	// Clamped preview with an expand toggle.
 	assert.Contains(t, page, "result-body")

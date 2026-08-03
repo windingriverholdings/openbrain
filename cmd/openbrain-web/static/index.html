@@ -63,7 +63,10 @@
     .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; transition: border-color 0.15s; }
     .result-card:hover { border-color: var(--accent-dim); }
     .result-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.68rem; color: var(--text-dim); font-family: var(--mono); }
-    .result-score { margin-left: auto; color: var(--accent); }
+    .result-score-wrap { position: relative; margin-left: auto; display: inline-flex; }
+    .result-score { color: var(--accent); cursor: help; border-bottom: 1px dotted var(--accent-dim); }
+    .score-tooltip { position: absolute; z-index: 10; right: 0; top: calc(100% + 8px); width: 280px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 0.72rem; line-height: 1.45; font-weight: 400; letter-spacing: normal; text-transform: none; text-align: left; box-shadow: 0 5px 18px rgba(0,0,0,0.45); opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(-3px); transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s; }
+    .result-score-wrap:hover .score-tooltip, .result-score-wrap:focus-within .score-tooltip { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); }
     .result-tag { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; font-size: 0.62rem; color: var(--text-dim); }
     /* Clamp: collapsed cards cap height and fade out; .expanded lifts the cap. */
     .result-body { position: relative; overflow: hidden; max-height: 5.6rem; font-size: 0.95rem; line-height: 1.55; word-break: break-word; }
@@ -297,9 +300,15 @@ function buildResultCard(row) {
     meta.appendChild(t);
   });
   if (typeof row.score === 'number') {
+    const scoreWrap = el('span', 'result-score-wrap');
     const score = el('span', 'result-score');
     score.textContent = row.score.toFixed(2);
-    meta.appendChild(score);
+    score.setAttribute('aria-label', 'Relevance score ' + row.score.toFixed(2));
+    const tooltip = el('span', 'score-tooltip');
+    tooltip.textContent = 'Relevance score: a hybrid ranking from semantic similarity (70%) and keyword matching (30%). Higher scores indicate stronger relevance within this search; it is not a percentage or probability.';
+    scoreWrap.appendChild(score);
+    scoreWrap.appendChild(tooltip);
+    meta.appendChild(scoreWrap);
   }
   card.appendChild(meta);
 
