@@ -654,7 +654,7 @@
 <header>
   <span aria-hidden="true">🧠</span>
   <h1>Brain Map</h1>
-  <a href="/" class="back-link">← Chat</a>
+  <a href="/" id="back-to-chat" class="back-link">← Chat</a>
   <span class="header-stats" id="header-stats"></span>
 </header>
 
@@ -1143,6 +1143,10 @@ function tokenQS() {
   const token = new URLSearchParams(location.search).get('token') || '';
   return token ? '?token=' + encodeURIComponent(token) : '';
 }
+
+// Keep the web auth token when navigating back to chat.
+const backToChat = document.getElementById('back-to-chat');
+if (backToChat) backToChat.href = '/' + location.search;
 
 async function fetchVizStatus() {
   const res = await fetch('/api/rebuild-viz/status' + tokenQS());

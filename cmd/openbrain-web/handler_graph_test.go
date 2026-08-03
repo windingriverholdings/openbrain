@@ -23,6 +23,8 @@ func TestGraphPageDoesNotAutoGenerateMap(t *testing.T) {
 
 	assert.Contains(t, page, `id="btn-rebuild"`)
 	assert.Contains(t, page, "Generate new map")
+	assert.Contains(t, page, `id="back-to-chat"`)
+	assert.Contains(t, page, "backToChat.href = '/' + location.search")
 	assert.NotContains(t, page, "runBlockingBuild(")
 	assert.NotContains(t, page, "runBackgroundRefresh(")
 	assert.Contains(t, page, "await loadData();")
