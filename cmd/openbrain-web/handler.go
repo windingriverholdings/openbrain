@@ -483,6 +483,7 @@ func apiReview(b *brain.Brain) http.HandlerFunc {
 
 type wsMessage struct {
 	Message string `json:"message"`
+	Intent  string `json:"intent,omitempty"`
 }
 
 // wsSearchResult is one structured search hit sent to the chat UI. The field
@@ -513,6 +514,8 @@ type wsResponse struct {
 	Intent      string           `json:"intent"`
 	ThoughtType string           `json:"thought_type"`
 	Results     []wsSearchResult `json:"results,omitempty"`
+	Ambiguous   bool             `json:"ambiguous,omitempty"`
+	Query       string           `json:"query,omitempty"`
 }
 
 // toWSSearchResults converts search rows into the structured websocket payload.
@@ -601,10 +604,27 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 			}
 
 			parsed := intent.Parse(msg.Message)
+			if msg.Intent == string(intent.Search) || msg.Intent == string(intent.Capture) {
+				parsed.Intent = intent.Intent(msg.Intent)
+				parsed.Text = msg.Message
+				if parsed.Intent == intent.Capture {
+					parsed.ThoughtType = intent.InferType(msg.Message)
+				}
+			}
 
 			resp := wsResponse{
 				Intent:      string(parsed.Intent),
 				ThoughtType: parsed.ThoughtType,
+			}
+			if parsed.Intent == intent.Ambiguous {
+				resp.Ambiguous = true
+				resp.Query = msg.Message
+				resp.Content = "I’m not sure whether you want to search for this or save it as a note."
+				if err := conn.WriteJSON(resp); err != nil {
+					slog.Error("websocket write error", "error", err)
+					return
+				}
+				continue
 			}
 
 			// Search is handled here rather than through Dispatch so the

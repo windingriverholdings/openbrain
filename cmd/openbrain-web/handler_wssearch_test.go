@@ -232,6 +232,16 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	// Clicking a card opens the full note detail.
 	assert.Contains(t, page, "function openDetail(")
 	assert.Contains(t, page, "'/api/thought/'")
+	assert.Contains(t, page, "function appendAmbiguous(")
+	assert.Contains(t, page, "Search for this")
+	assert.Contains(t, page, "Save as note")
+	assert.Contains(t, page, "id=\"search-hint\"")
+	assert.Contains(t, page, "id=\"detail-resize-handle\"")
+	assert.Contains(t, page, "role=\"separator\"")
+	assert.Contains(t, page, "flex: 1 1 auto; min-height: 0")
+	assert.Contains(t, page, "localStorage.getItem(DETAIL_WIDTH_KEY)")
+	assert.Contains(t, page, "setPointerCapture")
+	assert.Contains(t, page, "clampDetailWidth")
 
 	// Note content must never be injected as markup.
 	assert.NotContains(t, page, ".innerHTML = t.content")

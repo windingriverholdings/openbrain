@@ -54,6 +54,13 @@
     #empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim); text-align: center; pointer-events: none; }
     #empty .icon { font-size: 2.5rem; opacity: 0.5; }
     #empty p { font-size: 0.85rem; max-width: 280px; line-height: 1.6; }
+    #search-hint { padding: 0 20px 8px; color: var(--text-dim); font-size: 0.72rem; text-align: center; }
+    #search-hint code { color: var(--text); font-family: var(--mono); }
+    .ambiguity { align-self: flex-start; max-width: 78%; display: flex; flex-direction: column; gap: 8px; animation: fadeIn 0.15s ease; }
+    .ambiguity-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; line-height: 1.5; font-size: 0.9rem; }
+    .ambiguity-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ambiguity-actions button { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 6px 10px; cursor: pointer; font-family: var(--font); font-size: 0.78rem; }
+    .ambiguity-actions button:hover { border-color: var(--accent); color: var(--accent); }
 
     /* ── search results (structured list, deliberately NOT a chat bubble) ── */
     .results { align-self: stretch; max-width: 100%; display: flex; flex-direction: column; gap: 8px; animation: fadeIn 0.15s ease; }
@@ -69,33 +76,42 @@
     .result-score-wrap:hover .score-tooltip, .result-score-wrap:focus-within .score-tooltip { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); }
     .result-tag { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; font-size: 0.62rem; color: var(--text-dim); }
     /* Clamp: collapsed cards cap height and fade out; .expanded lifts the cap. */
-    .result-body { position: relative; overflow: hidden; max-height: 5.6rem; font-size: 0.95rem; line-height: 1.55; word-break: break-word; }
+    .note-body { font-size: 0.95rem; line-height: 1.55; word-break: break-word; }
+    .result-body { position: relative; overflow: hidden; max-height: 5.6rem; }
     .result-body.expanded { max-height: none; }
     .result-body::after { content: ''; position: absolute; inset: auto 0 0 0; height: 1.8rem; background: linear-gradient(transparent, var(--surface)); pointer-events: none; transition: opacity 0.15s; }
     .result-body.expanded::after { opacity: 0; }
-    .result-body p { margin: 0 0 0.5em; }
-    .result-body p:last-child { margin-bottom: 0; }
-    .result-body ul { margin: 0 0 0.5em; padding-left: 1.2em; }
-    .result-body ul:last-child { margin-bottom: 0; }
-    .result-body li { margin: 0.15em 0; }
-    .result-body pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; overflow-x: auto; margin: 0 0 0.5em; }
-    .result-body pre:last-child { margin-bottom: 0; }
-    .result-body pre code { font-family: var(--mono); font-size: 0.8rem; color: var(--text); background: none; padding: 0; }
+    .note-body p { margin: 0 0 0.5em; }
+    .note-body p:last-child { margin-bottom: 0; }
+    .note-body ul { margin: 0 0 0.5em; padding-left: 1.2em; }
+    .note-body ul:last-child { margin-bottom: 0; }
+    .note-body li { margin: 0.15em 0; }
+    .note-body pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; overflow-x: auto; margin: 0 0 0.5em; }
+    .note-body pre:last-child { margin-bottom: 0; }
+    .note-body pre code { font-family: var(--mono); font-size: 0.8rem; color: var(--text); background: none; padding: 0; }
     .result-actions { display: flex; align-items: center; gap: 8px; }
     .result-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-family: var(--font); font-size: 0.7rem; padding: 3px 9px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
     .result-btn:hover { border-color: var(--accent-dim); color: var(--text); }
 
     /* ── thought detail panel ── */
-    #detail-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 92vw); background: var(--surface); border-left: 1px solid var(--border); transform: translateX(100%); transition: transform 0.18s ease; display: flex; flex-direction: column; z-index: 60; }
+    #detail-panel { --detail-w: clamp(480px, 40vw, 820px); position: fixed; top: 0; right: 0; bottom: 0; width: var(--detail-w); max-width: 95vw; min-width: 360px; background: var(--surface); border-left: 1px solid var(--border); transform: translateX(100%); transition: transform 0.18s ease; display: flex; flex-direction: column; z-index: 60; }
     #detail-panel.open { transform: translateX(0); }
+    #detail-resize-handle { position: absolute; top: 0; bottom: 0; left: -7px; width: 14px; cursor: col-resize; z-index: 1; }
+    #detail-resize-handle::after { content: ''; position: absolute; top: 50%; left: 5px; width: 3px; height: 42px; border-radius: 2px; background: var(--border); transform: translateY(-50%); opacity: 0; transition: opacity 0.15s, background 0.15s; }
+    #detail-resize-handle:hover::after, #detail-resize-handle:focus::after, body.resizing #detail-resize-handle::after { opacity: 1; background: var(--accent); }
+    body.resizing { user-select: none; cursor: col-resize; }
     #detail-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
     #detail-head h2 { font-size: 0.9rem; font-weight: 600; }
     #detail-close { margin-left: auto; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-family: var(--font); font-size: 0.7rem; padding: 3px 9px; cursor: pointer; }
     #detail-close:hover { border-color: var(--red); color: var(--red); }
-    #detail-content { padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; font-size: 0.95rem; line-height: 1.6; }
+    #detail-content { flex: 1 1 auto; min-height: 0; padding: 16px; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; }
     #detail-content .detail-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 0.68rem; color: var(--text-dim); font-family: var(--mono); }
     #detail-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transition: opacity 0.18s; z-index: 55; }
     #detail-backdrop.open { opacity: 1; pointer-events: auto; }
+    @media (max-width: 640px) {
+      #detail-panel { width: 100%; max-width: 100%; min-width: 0; }
+      #detail-resize-handle { display: none; }
+    }
   </style>
 
 </head>
@@ -116,12 +132,14 @@
     <p>Type <strong>help</strong> to see all commands.</p>
   </div>
 </div>
+<div id="search-hint">Search with <code>search: tent notes</code>, <code>find tent notes</code>, or a question.</div>
 <div id="input-bar">
   <textarea id="input" rows="1" placeholder="Capture a thought, or search your brain…" aria-label="Message input" autofocus></textarea>
   <button id="send" disabled aria-label="Send message">Send</button>
 </div>
 <div id="detail-backdrop"></div>
 <div id="detail-panel" role="dialog" aria-modal="true" aria-label="Note detail" aria-hidden="true">
+  <div id="detail-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize note detail panel" tabindex="0"></div>
   <div id="detail-head">
     <h2 id="detail-title">Note</h2>
     <button id="detail-close" aria-label="Close note detail">Close ✕</button>
@@ -312,7 +330,7 @@ function buildResultCard(row) {
   }
   card.appendChild(meta);
 
-  const body = el('div', 'result-body');
+  const body = el('div', 'result-body note-body');
   // Prefer the summary as the preview when the backend supplied one.
   renderNoteBody(row.summary ? row.summary : row.content, body);
   card.appendChild(body);
@@ -383,7 +401,70 @@ const detailBackdrop = document.getElementById('detail-backdrop');
 const detailContent  = document.getElementById('detail-content');
 const detailTitle    = document.getElementById('detail-title');
 const detailCloseBtn = document.getElementById('detail-close');
+const detailResize   = document.getElementById('detail-resize-handle');
+const DETAIL_WIDTH_KEY = 'openbrain.detailWidth';
+const DETAIL_MIN_WIDTH = 360;
+const DETAIL_MAX_WIDTH = 1100;
 let lastFocused = null;
+
+function clampDetailWidth(width) {
+  const viewportMax = Math.max(DETAIL_MIN_WIDTH, Math.min(DETAIL_MAX_WIDTH, window.innerWidth * 0.95));
+  return Math.round(Math.max(DETAIL_MIN_WIDTH, Math.min(viewportMax, width)));
+}
+
+function setDetailWidth(width, persist) {
+  const clamped = clampDetailWidth(Number(width));
+  detailPanel.style.setProperty('--detail-w', clamped + 'px');
+  if (persist) {
+    try { localStorage.setItem(DETAIL_WIDTH_KEY, String(clamped)); } catch (_) { /* storage unavailable */ }
+  }
+  return clamped;
+}
+
+function restoreDetailWidth() {
+  try {
+    const saved = Number(localStorage.getItem(DETAIL_WIDTH_KEY));
+    if (Number.isFinite(saved) && saved > 0) setDetailWidth(saved, false);
+  } catch (_) { /* storage unavailable */ }
+}
+
+restoreDetailWidth();
+window.addEventListener('resize', function() {
+  const width = detailPanel.getBoundingClientRect().width;
+  if (width > 0) setDetailWidth(width, false);
+});
+
+let resizingDetail = false;
+function finishDetailResize() {
+  if (!resizingDetail) return;
+  resizingDetail = false;
+  document.body.classList.remove('resizing');
+  if (detailResize.hasPointerCapture && detailResize.hasPointerCapture(activeResizePointer)) {
+    detailResize.releasePointerCapture(activeResizePointer);
+  }
+}
+let activeResizePointer = null;
+detailResize.addEventListener('pointerdown', function(e) {
+  if (window.innerWidth <= 640) return;
+  resizingDetail = true;
+  activeResizePointer = e.pointerId;
+  detailResize.setPointerCapture(e.pointerId);
+  document.body.classList.add('resizing');
+  e.preventDefault();
+});
+detailResize.addEventListener('pointermove', function(e) {
+  if (!resizingDetail) return;
+  setDetailWidth(window.innerWidth - e.clientX, true);
+});
+detailResize.addEventListener('pointerup', finishDetailResize);
+detailResize.addEventListener('pointercancel', finishDetailResize);
+detailResize.addEventListener('keydown', function(e) {
+  const current = detailPanel.getBoundingClientRect().width;
+  if (e.key === 'ArrowLeft') { setDetailWidth(current + 24, true); e.preventDefault(); }
+  if (e.key === 'ArrowRight') { setDetailWidth(current - 24, true); e.preventDefault(); }
+  if (e.key === 'Home') { setDetailWidth(DETAIL_MIN_WIDTH, true); e.preventDefault(); }
+  if (e.key === 'End') { setDetailWidth(DETAIL_MAX_WIDTH, true); e.preventDefault(); }
+});
 
 function closeDetail() {
   detailPanel.classList.remove('open');
@@ -432,12 +513,12 @@ async function openDetail(id) {
     detailContent.appendChild(meta);
 
     if (t.summary) {
-      const sum = el('div', 'result-body expanded');
+      const sum = el('div', 'note-body');
       renderNoteBody(t.summary, sum);
       detailContent.appendChild(sum);
     }
 
-    const bodyWrap = el('div', 'result-body expanded');
+    const bodyWrap = el('div', 'note-body');
     renderNoteBody(t.content, bodyWrap);
     detailContent.appendChild(bodyWrap);
   } catch (err) {
@@ -456,6 +537,27 @@ function appendBrain(text, intent, thoughtType) {
   badge.textContent = badgeLabel;
   meta.appendChild(timeNode);
   meta.appendChild(badge);
+  messagesEl.appendChild(wrap);
+  scrollBottom();
+}
+
+function appendAmbiguous(data) {
+  hideEmpty();
+  const wrap = el('div', 'ambiguity');
+  const card = el('div', 'ambiguity-card');
+  card.textContent = data.content || 'Should I search for this or save it as a note?';
+  const actions = el('div', 'ambiguity-actions');
+  [['Search for this', 'search'], ['Save as note', 'capture']].forEach(function(item) {
+    const button = el('button');
+    button.textContent = item[0];
+    button.addEventListener('click', function() {
+      wrap.remove();
+      submitMessage(data.query, item[1], false);
+    });
+    actions.appendChild(button);
+  });
+  wrap.appendChild(card);
+  wrap.appendChild(actions);
   messagesEl.appendChild(wrap);
   scrollBottom();
 }
@@ -498,6 +600,11 @@ function connect() {
     removeTyping();
     let data;
     try { data = JSON.parse(e.data); } catch(err) { return; }
+    if (data.ambiguous) {
+      data.query = data.query || data.content;
+      appendAmbiguous(data);
+      return;
+    }
     // Search replies carry structured rows and render as a result list.
     // Every other intent keeps the existing conversational bubble.
     if (data.intent === 'search' && Array.isArray(data.results)) {
@@ -510,12 +617,20 @@ function connect() {
 
 connect();
 
+function submitMessage(text, explicitIntent, showUser) {
+  if (!text || ws.readyState !== WebSocket.OPEN) return;
+  if (showUser !== false) appendUser(text);
+  const message = { message: text };
+  if (explicitIntent) message.intent = explicitIntent;
+  ws.send(JSON.stringify(message));
+  showTyping();
+  inputEl.style.height = 'auto';
+}
+
 function send() {
   const text = inputEl.value.trim();
   if (!text || ws.readyState !== WebSocket.OPEN) return;
-  appendUser(text);
-  ws.send(JSON.stringify({ message: text }));
-  showTyping();
+  submitMessage(text, '', true);
   inputEl.value = '';
   inputEl.style.height = 'auto';
 }

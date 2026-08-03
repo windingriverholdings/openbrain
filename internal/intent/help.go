@@ -22,6 +22,10 @@ const HelpText = `**OpenBrain** — your personal knowledge base
 > search: Redis decisions
 > what do I know about Alice?
 > find: deployment lessons
+> look for tent notes
+> notes about camping
+
+If a short message could be either a note or a search, OpenBrain asks you to choose.
 
 **Weekly review:**
 > weekly review

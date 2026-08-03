@@ -122,6 +122,11 @@ func (b *Brain) Dispatch(ctx context.Context, parsed intent.ParsedIntent, source
 		return b.formatReview(ctx, 7)
 	case intent.Search:
 		return b.formatSearch(ctx, parsed.Text, SearchOpts{Mode: "hybrid"})
+	case intent.Ambiguous:
+		// Non-interactive callers cannot ask the user to choose. Search is
+		// the safe default because it is read-only; the web UI presents the
+		// explicit capture/search choice instead.
+		return b.formatSearch(ctx, parsed.Text, SearchOpts{Mode: "hybrid"})
 	case intent.Supersede:
 		return b.Supersede(ctx, parsed, source)
 	case intent.Extract:
