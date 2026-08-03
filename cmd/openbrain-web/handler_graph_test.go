@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGraphPageDoesNotAutoGenerateMap(t *testing.T) {
+	graphPath := filepath.Join("static", "graph.html")
+	data, err := os.ReadFile(graphPath)
+	require.NoError(t, err)
+	page := string(data)
+
+	assert.Contains(t, page, `id="btn-rebuild"`)
+	assert.Contains(t, page, "Generate new map")
+	assert.NotContains(t, page, "runBlockingBuild(")
+	assert.NotContains(t, page, "runBackgroundRefresh(")
+	assert.Contains(t, page, "await loadData();")
+}
 
 // graphFSStub is a minimal fs.FS that serves a fake graph.html so tests do not
 // depend on the embedded binary blob or a real brain.json being present.
