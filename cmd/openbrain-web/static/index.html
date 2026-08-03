@@ -54,8 +54,6 @@
     #empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim); text-align: center; pointer-events: none; }
     #empty .icon { font-size: 2.5rem; opacity: 0.5; }
     #empty p { font-size: 0.85rem; max-width: 280px; line-height: 1.6; }
-    #search-hint { padding: 0 20px 8px; color: var(--text-dim); font-size: 0.72rem; text-align: center; }
-    #search-hint code { color: var(--text); font-family: var(--mono); }
     .ambiguity { align-self: flex-start; max-width: 78%; display: flex; flex-direction: column; gap: 8px; animation: fadeIn 0.15s ease; }
     .ambiguity-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; line-height: 1.5; font-size: 0.9rem; }
     .ambiguity-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -132,7 +130,6 @@
     <p>Type <strong>help</strong> to see all commands.</p>
   </div>
 </div>
-<div id="search-hint">Search with <code>search: tent notes</code>, <code>find tent notes</code>, or a question.</div>
 <div id="input-bar">
   <textarea id="input" rows="1" placeholder="Capture a thought, or search your brain…" aria-label="Message input" autofocus></textarea>
   <button id="send" disabled aria-label="Send message">Send</button>

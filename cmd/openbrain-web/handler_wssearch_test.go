@@ -235,7 +235,7 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	assert.Contains(t, page, "function appendAmbiguous(")
 	assert.Contains(t, page, "Search for this")
 	assert.Contains(t, page, "Save as note")
-	assert.Contains(t, page, "id=\"search-hint\"")
+	assert.NotContains(t, page, "search-hint")
 	assert.Contains(t, page, "id=\"detail-resize-handle\"")
 	assert.Contains(t, page, "role=\"separator\"")
 	assert.Contains(t, page, "flex: 1 1 auto; min-height: 0")
