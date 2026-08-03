@@ -177,8 +177,11 @@ def _looks_ambiguous(msg: str) -> bool:
     """Identify short note-oriented phrases that need an explicit choice."""
     if len(msg.split()) < 2:
         return False
-    lower = msg.lower()
-    return any(term in lower for term in ("note", "notes", "memory", "memories", "about", "regarding", "related"))
+    return re.search(
+        r"\b(note|notes|memory|memories|about|regarding|related)\b",
+        msg,
+        re.IGNORECASE,
+    ) is not None
 
 
 HELP_TEXT = """

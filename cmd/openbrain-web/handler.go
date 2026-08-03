@@ -510,12 +510,14 @@ type wsSearchResult struct {
 // have. Content remains populated for search too: it is the plain-text
 // rendering older clients (and any non-card fallback path) rely on.
 type wsResponse struct {
-	Content     string           `json:"content"`
-	Intent      string           `json:"intent"`
-	ThoughtType string           `json:"thought_type"`
-	Results     []wsSearchResult `json:"results,omitempty"`
-	Ambiguous   bool             `json:"ambiguous,omitempty"`
-	Query       string           `json:"query,omitempty"`
+	Content     string `json:"content"`
+	Intent      string `json:"intent"`
+	ThoughtType string `json:"thought_type"`
+	// A pointer distinguishes "not a search response" (nil, omitted) from
+	// "search completed with no matches" (non-nil pointer to an empty array).
+	Results   *[]wsSearchResult `json:"results,omitempty"`
+	Ambiguous bool              `json:"ambiguous,omitempty"`
+	Query     string            `json:"query,omitempty"`
 }
 
 // toWSSearchResults converts search rows into the structured websocket payload.
@@ -641,7 +643,8 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 					resp.Content = fmt.Sprintf("Error: %v", err)
 				} else {
 					resp.Content = brain.FormatSearchResults(rows)
-					resp.Results = toWSSearchResults(rows)
+					results := toWSSearchResults(rows)
+					resp.Results = &results
 				}
 			} else {
 				result, err := b.Dispatch(r.Context(), parsed, "web")

@@ -71,6 +71,20 @@ func TestSearchPhrasesAndAmbiguity(t *testing.T) {
 	}
 }
 
+func TestLooksAmbiguousUsesWholeWords(t *testing.T) {
+	for _, input := range []string{
+		"bought a new notebook today",
+		"the aboutface redesign shipped",
+		"relatedly the build is faster",
+		"memoryless cache is fine",
+	} {
+		assert.Equal(t, Capture, Parse(input).Intent, input)
+	}
+
+	assert.Equal(t, Ambiguous, Parse("tent notes.").Intent)
+	assert.Equal(t, Capture, Parse("notes").Intent)
+}
+
 type inferTypeTestCase struct {
 	Input        string `json:"input"`
 	ExpectedType string `json:"expected_type"`

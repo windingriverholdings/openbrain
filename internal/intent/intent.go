@@ -172,9 +172,13 @@ func looksAmbiguous(msg string) bool {
 	if len(strings.Fields(msg)) < 2 {
 		return false
 	}
-	lower := strings.ToLower(msg)
-	for _, term := range []string{"note", "notes", "memory", "memories", "about", "regarding", "related"} {
-		if strings.Contains(lower, term) {
+	terms := map[string]struct{}{
+		"note": {}, "notes": {}, "memory": {}, "memories": {},
+		"about": {}, "regarding": {}, "related": {},
+	}
+	for _, word := range strings.Fields(strings.ToLower(msg)) {
+		word = strings.Trim(word, ".,;:!?\"'()[]{}")
+		if _, ok := terms[word]; ok {
 			return true
 		}
 	}

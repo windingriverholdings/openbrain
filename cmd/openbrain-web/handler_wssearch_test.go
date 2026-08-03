@@ -40,18 +40,19 @@ func TestWsResponse_NonSearchOmitsResults(t *testing.T) {
 // TestWsResponse_SearchIncludesResults pins the structured payload's JSON
 // contract, which the frontend's card renderer reads field-by-field.
 func TestWsResponse_SearchIncludesResults(t *testing.T) {
+	rows := []wsSearchResult{{
+		ID:        "abc-123",
+		Score:     0.91,
+		Type:      "decision",
+		Tags:      []string{"infra"},
+		Summary:   "session caching",
+		Content:   "use Redis for session caching",
+		CreatedAt: "2026-08-03",
+	}}
 	data, err := json.Marshal(wsResponse{
 		Content: "Found 1 thought(s):\n\n1. [decision] (0.91) — 2026-08-03\n   use Redis\n\n",
 		Intent:  "search",
-		Results: []wsSearchResult{{
-			ID:        "abc-123",
-			Score:     0.91,
-			Type:      "decision",
-			Tags:      []string{"infra"},
-			Summary:   "session caching",
-			Content:   "use Redis for session caching",
-			CreatedAt: "2026-08-03",
-		}},
+		Results: &rows,
 	})
 	require.NoError(t, err)
 
@@ -140,6 +141,10 @@ func TestToWSSearchResults_EmptyRowsMarshalsAsEmptyArray(t *testing.T) {
 	got := toWSSearchResults(nil)
 	assert.NotNil(t, got)
 	assert.Empty(t, got)
+
+	data, err := json.Marshal(wsResponse{Intent: "search", Results: &got})
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"results":[]`, "zero-hit searches must retain the structured empty array")
 }
 
 // TestToWSSearchResults_DoesNotTruncateContent guards the difference from
