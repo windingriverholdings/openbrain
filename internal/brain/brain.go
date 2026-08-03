@@ -421,8 +421,21 @@ func (b *Brain) formatSearch(ctx context.Context, query string, opts SearchOpts)
 		return "", err
 	}
 
+	return FormatSearchResults(results), nil
+}
+
+// FormatSearchResults renders search results as the plain-text listing used by
+// the CLI, the MCP search tool, and the web socket's backward-compatible
+// "content" field.
+//
+// It is exported so a caller that already holds the rows from Brain.Search can
+// produce the exact same string without running the search (and therefore the
+// query embedding) a second time. The output format is intentionally identical
+// to what formatSearch has always emitted: existing callers must not observe a
+// change.
+func FormatSearchResults(results []model.ThoughtRow) string {
 	if len(results) == 0 {
-		return "No matching thoughts found.", nil
+		return "No matching thoughts found."
 	}
 
 	var sb strings.Builder
@@ -436,7 +449,7 @@ func (b *Brain) formatSearch(ctx context.Context, query string, opts SearchOpts)
 			i+1, t.ThoughtType, score, t.CreatedAt.Format("2006-01-02"), t.Content)
 	}
 
-	return sb.String(), nil
+	return sb.String()
 }
 
 func extractSubjectsSimple(text, thoughtType string, tags []string) []model.SubjectLink {

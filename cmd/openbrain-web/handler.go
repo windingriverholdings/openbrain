@@ -25,6 +25,7 @@ import (
 	"github.com/windingriverholdings/openbrain/internal/embeddings"
 	"github.com/windingriverholdings/openbrain/internal/intent"
 	"github.com/windingriverholdings/openbrain/internal/mcphttp"
+	"github.com/windingriverholdings/openbrain/internal/model"
 )
 
 //go:embed static
@@ -484,10 +485,65 @@ type wsMessage struct {
 	Message string `json:"message"`
 }
 
+// wsSearchResult is one structured search hit sent to the chat UI. The field
+// names and JSON tags deliberately mirror apiSearchNodes' nodeResult so the
+// websocket and REST search payloads stay symmetrical and the frontend can
+// treat a hit from either source identically.
+//
+// Unlike apiSearchNodes, Content is NOT truncated: the chat UI clamps long
+// bodies visually and expands them in place, so it needs the full text.
+type wsSearchResult struct {
+	ID        string   `json:"id"`
+	Score     float64  `json:"score"`
+	Type      string   `json:"type"`
+	Tags      []string `json:"tags"`
+	Summary   string   `json:"summary"`
+	Content   string   `json:"content"`
+	CreatedAt string   `json:"created_at"`
+}
+
+// wsResponse is the websocket reply envelope.
+//
+// Results is populated for search intents only and is omitted entirely for
+// every other intent, so non-search replies serialize exactly as they always
+// have. Content remains populated for search too: it is the plain-text
+// rendering older clients (and any non-card fallback path) rely on.
 type wsResponse struct {
-	Content     string `json:"content"`
-	Intent      string `json:"intent"`
-	ThoughtType string `json:"thought_type"`
+	Content     string           `json:"content"`
+	Intent      string           `json:"intent"`
+	ThoughtType string           `json:"thought_type"`
+	Results     []wsSearchResult `json:"results,omitempty"`
+}
+
+// toWSSearchResults converts search rows into the structured websocket payload.
+// Tags is normalized to a non-nil slice so the JSON is always an array rather
+// than null, matching apiSearchNodes.
+func toWSSearchResults(rows []model.ThoughtRow) []wsSearchResult {
+	results := make([]wsSearchResult, 0, len(rows))
+	for _, row := range rows {
+		summary := ""
+		if row.Summary != nil {
+			summary = *row.Summary
+		}
+		score := 0.0
+		if row.Score != nil {
+			score = *row.Score
+		}
+		tags := row.Tags
+		if tags == nil {
+			tags = []string{}
+		}
+		results = append(results, wsSearchResult{
+			ID:        row.ID,
+			Score:     score,
+			Type:      row.ThoughtType,
+			Tags:      tags,
+			Summary:   summary,
+			Content:   row.Content,
+			CreatedAt: row.CreatedAt.Format("2006-01-02"),
+		})
+	}
+	return results
 }
 
 // staticAuth wraps a handler so that, when authToken is non-empty, requests must
@@ -545,16 +601,36 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 			}
 
 			parsed := intent.Parse(msg.Message)
-			result, err := b.Dispatch(r.Context(), parsed, "web")
-			if err != nil {
-				result = fmt.Sprintf("Error: %v", err)
-			}
 
 			resp := wsResponse{
-				Content:     result,
 				Intent:      string(parsed.Intent),
 				ThoughtType: parsed.ThoughtType,
 			}
+
+			// Search is handled here rather than through Dispatch so the
+			// structured rows survive to the client. Dispatch would flatten
+			// them to a string, and re-running the search afterwards to
+			// recover them would embed the query twice (two Ollama round
+			// trips). The hybrid search itself is unchanged: same
+			// SearchOpts{Mode: "hybrid"} Dispatch uses, and the plain-text
+			// content field is rendered from these same rows by the shared
+			// formatter, so it is byte-identical to the old reply.
+			if parsed.Intent == intent.Search {
+				rows, err := b.Search(r.Context(), parsed.Text, brain.SearchOpts{Mode: "hybrid"})
+				if err != nil {
+					resp.Content = fmt.Sprintf("Error: %v", err)
+				} else {
+					resp.Content = brain.FormatSearchResults(rows)
+					resp.Results = toWSSearchResults(rows)
+				}
+			} else {
+				result, err := b.Dispatch(r.Context(), parsed, "web")
+				if err != nil {
+					result = fmt.Sprintf("Error: %v", err)
+				}
+				resp.Content = result
+			}
+
 			if err := conn.WriteJSON(resp); err != nil {
 				slog.Error("websocket write error", "error", err)
 				return
