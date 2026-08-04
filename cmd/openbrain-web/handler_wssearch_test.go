@@ -224,6 +224,9 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	assert.Contains(t, page, "results-empty")
 	assert.Contains(t, page, "score-tooltip")
 	assert.Contains(t, page, "semantic similarity (70%) and keyword matching (30%)")
+	assert.Contains(t, page, "tooltip-title")
+	assert.Contains(t, page, "aria-describedby=\"search-mode-tooltip\"")
+	assert.Contains(t, page, "generated several related search queries")
 	assert.Contains(t, page, "score.setAttribute('aria-label', 'Relevance score '")
 
 	// Clamped preview with an expand toggle.
@@ -247,6 +250,9 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	assert.Contains(t, page, "localStorage.getItem(DETAIL_WIDTH_KEY)")
 	assert.Contains(t, page, "setPointerCapture")
 	assert.Contains(t, page, "clampDetailWidth")
+	assert.Contains(t, page, "AI-assisted search")
+	assert.Contains(t, page, "search-work")
+	assert.Contains(t, page, "expanded_queries")
 
 	// Note content must never be injected as markup.
 	assert.NotContains(t, page, ".innerHTML = t.content")

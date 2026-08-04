@@ -268,14 +268,21 @@ func apiSearch(b *brain.Brain) http.HandlerFunc {
 			return
 		}
 
-		parsed := intent.ParsedIntent{Intent: intent.Search, Text: query, ThoughtType: "note"}
-		result, err := b.Dispatch(r.Context(), parsed, "web")
+		mode := r.URL.Query().Get("mode")
+		if mode == "" {
+			mode = "hybrid"
+		}
+		if mode != "hybrid" && mode != "assisted" {
+			http.Error(w, "invalid mode: must be hybrid or assisted", http.StatusBadRequest)
+			return
+		}
+		rows, err := b.Search(r.Context(), query, brain.SearchOpts{Mode: mode})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		jsonResponse(w, map[string]string{"result": result})
+		jsonResponse(w, map[string]any{"result": brain.FormatSearchResults(rows), "mode": mode})
 	}
 }
 
@@ -291,7 +298,15 @@ func apiSearchNodes(b *brain.Brain) http.HandlerFunc {
 			return
 		}
 
-		opts := brain.SearchOpts{Mode: "hybrid"}
+		mode := r.URL.Query().Get("mode")
+		if mode == "" {
+			mode = "hybrid"
+		}
+		if mode != "hybrid" && mode != "assisted" {
+			http.Error(w, "invalid mode: must be hybrid or assisted", http.StatusBadRequest)
+			return
+		}
+		opts := brain.SearchOpts{Mode: mode}
 
 		if from := r.URL.Query().Get("from"); from != "" {
 			t, err := time.Parse("2006-01-02", from)
@@ -484,6 +499,7 @@ func apiReview(b *brain.Brain) http.HandlerFunc {
 type wsMessage struct {
 	Message string `json:"message"`
 	Intent  string `json:"intent,omitempty"`
+	Mode    string `json:"mode,omitempty"`
 }
 
 // wsSearchResult is one structured search hit sent to the chat UI. The field
@@ -515,9 +531,11 @@ type wsResponse struct {
 	ThoughtType string `json:"thought_type"`
 	// A pointer distinguishes "not a search response" (nil, omitted) from
 	// "search completed with no matches" (non-nil pointer to an empty array).
-	Results   *[]wsSearchResult `json:"results,omitempty"`
-	Ambiguous bool              `json:"ambiguous,omitempty"`
-	Query     string            `json:"query,omitempty"`
+	Results         *[]wsSearchResult `json:"results,omitempty"`
+	Ambiguous       bool              `json:"ambiguous,omitempty"`
+	Query           string            `json:"query,omitempty"`
+	Mode            string            `json:"mode,omitempty"`
+	ExpandedQueries []string          `json:"expanded_queries,omitempty"`
 }
 
 // toWSSearchResults converts search rows into the structured websocket payload.
@@ -638,13 +656,26 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 			// content field is rendered from these same rows by the shared
 			// formatter, so it is byte-identical to the old reply.
 			if parsed.Intent == intent.Search {
-				rows, err := b.Search(r.Context(), parsed.Text, brain.SearchOpts{Mode: "hybrid"})
+				mode := msg.Mode
+				if mode == "" {
+					mode = "hybrid"
+				}
+				if mode != "hybrid" && mode != "assisted" {
+					resp.Content = "Error: invalid search mode"
+					if err := conn.WriteJSON(resp); err != nil {
+						return
+					}
+					continue
+				}
+				details, err := b.SearchWithDetails(r.Context(), parsed.Text, brain.SearchOpts{Mode: mode})
 				if err != nil {
 					resp.Content = fmt.Sprintf("Error: %v", err)
 				} else {
-					resp.Content = brain.FormatSearchResults(rows)
-					results := toWSSearchResults(rows)
+					resp.Content = brain.FormatSearchResults(details.Results)
+					results := toWSSearchResults(details.Results)
 					resp.Results = &results
+					resp.Mode = mode
+					resp.ExpandedQueries = details.ExpandedQueries
 				}
 			} else {
 				result, err := b.Dispatch(r.Context(), parsed, "web")
