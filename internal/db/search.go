@@ -18,7 +18,7 @@ func SearchThoughts(ctx context.Context, p *pgxpool.Pool, embedding []float32, t
 
 	query := `
 		SELECT id::text, content, summary, thought_type::text,
-		       tags, source, created_at,
+		       tags, source, metadata, created_at,
 		       1 - (embedding <=> $1::vector) AS score
 		FROM thoughts
 		WHERE is_current = TRUE
@@ -84,7 +84,7 @@ func SearchThoughts(ctx context.Context, p *pgxpool.Pool, embedding []float32, t
 func buildHybridSearchQuery(embeddingDim int) string {
 	return fmt.Sprintf(`
 		SELECT id::text, content, summary, thought_type::text,
-		       tags, source, created_at, combined_score
+		       tags, source, metadata, created_at, combined_score
 		FROM hybrid_search(
 		         $1::text,
 		         $2::vector(%d),
@@ -155,7 +155,7 @@ func HybridSearchThoughts(ctx context.Context, p *pgxpool.Pool, queryText string
 func KeywordSearchThoughts(ctx context.Context, p *pgxpool.Pool, queryText string, topK int, includeHistory bool, thoughtType string, createdFrom, createdTo *time.Time) ([]model.ThoughtRow, error) {
 	query := `
 		SELECT id::text, content, summary, thought_type::text,
-		       tags, source, created_at,
+		       tags, source, metadata, created_at,
 		       ts_rank(fts_vector, websearch_to_tsquery('english', $1)) AS score
 		FROM thoughts
 		WHERE fts_vector @@ websearch_to_tsquery('english', $1)`

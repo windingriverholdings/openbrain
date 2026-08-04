@@ -178,7 +178,7 @@ func ShortID(id string) string {
 func GetThoughtTimeline(ctx context.Context, p *pgxpool.Pool, subjectName string, topK int) ([]model.ThoughtRow, error) {
 	rows, err := p.Query(ctx, `
 		SELECT t.id::text, t.content, t.summary, t.thought_type::text,
-		       t.tags, t.source, t.created_at,
+		       t.tags, t.source, t.metadata, t.created_at,
 		       NULL::float8 AS score
 		FROM thoughts t
 		JOIN thought_subjects ts ON ts.thought_id = t.id

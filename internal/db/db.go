@@ -95,7 +95,7 @@ func scanThought(rows pgx.Rows) (model.ThoughtRow, error) {
 	var t model.ThoughtRow
 	err := rows.Scan(
 		&t.ID, &t.Content, &t.Summary, &t.ThoughtType,
-		&t.Tags, &t.Source, &t.CreatedAt, &t.Score,
+		&t.Tags, &t.Source, &t.Metadata, &t.CreatedAt, &t.Score,
 	)
 	return t, err
 }

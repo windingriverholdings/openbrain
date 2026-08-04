@@ -53,7 +53,7 @@ func GetStats(ctx context.Context, p *pgxpool.Pool) (*model.Stats, error) {
 func GetThoughtByID(ctx context.Context, p *pgxpool.Pool, id string) (*model.ThoughtRow, error) {
 	rows, err := p.Query(ctx, `
 		SELECT id::text, content, summary, thought_type::text,
-		       tags, source, created_at,
+		       tags, source, metadata, created_at,
 		       NULL::float8 AS score
 		FROM thoughts
 		WHERE id = $1::uuid AND is_current = TRUE`,
@@ -81,7 +81,7 @@ func GetThoughtByID(ctx context.Context, p *pgxpool.Pool, id string) (*model.Tho
 func GetThoughtsSince(ctx context.Context, p *pgxpool.Pool, days int) ([]model.ThoughtRow, error) {
 	rows, err := p.Query(ctx, `
 		SELECT id::text, content, summary, thought_type::text,
-		       tags, source, created_at,
+		       tags, source, metadata, created_at,
 		       NULL::float8 AS score
 		FROM thoughts
 		WHERE is_current = TRUE
