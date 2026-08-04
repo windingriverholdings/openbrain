@@ -56,8 +56,10 @@
     .composer-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 9px; border: 0; border-radius: 999px; background: transparent; color: var(--text-dim); font: 500 0.76rem var(--font); cursor: pointer; transition: color 0.15s, background 0.15s; }
     .composer-btn:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,0.08); }
     .composer-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; }
-    #search-mode[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
-    #ai-assist[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
+     #search-mode[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
+     #ai-assist[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
+     #ai-summarize[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
+     #ai-summarize:disabled { display: none; }
     #search-mode[aria-pressed="true"] .mode-dot { background: var(--mode-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode-color) 16%, transparent); }
     .mode-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mode-color); transition: background 0.15s, box-shadow 0.15s; }
     #send { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; background: var(--mode-color); border: none; border-radius: 50%; color: #fff; cursor: pointer; transition: opacity 0.15s, transform 0.15s; flex-shrink: 0; }
@@ -85,8 +87,12 @@
     .results-head { display: flex; align-items: baseline; gap: 8px; font-size: 0.72rem; color: var(--text-dim); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.06em; }
     .results-count { color: var(--text); }
     .results-empty { padding: 14px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--text-dim); font-size: 0.9rem; text-align: center; }
-    .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; transition: border-color 0.15s; }
-    .result-card:hover { border-color: var(--accent-dim); }
+     .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; transition: border-color 0.15s; }
+     .result-card:hover { border-color: var(--accent-dim); }
+     .summary-card { background: linear-gradient(145deg, rgba(108,142,245,0.14), var(--surface)); border-color: rgba(108,142,245,0.48); }
+     .summary-card:hover { border-color: var(--accent); }
+     .summary-card .result-meta { color: var(--accent); }
+     .summary-card .result-meta .badge { color: var(--accent); border-color: rgba(108,142,245,0.45); }
     .result-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.68rem; color: var(--text-dim); font-family: var(--mono); }
     .result-score-wrap { position: relative; margin-left: auto; display: inline-flex; }
     .result-score { color: var(--accent); cursor: help; border-bottom: 1px dotted var(--accent-dim); }
@@ -174,13 +180,22 @@
             <span class="tooltip-copy">Save what you enter to your knowledge base. Press Tab to switch to Search mode.</span>
           </span>
         </span>
-        <span class="search-mode-wrap">
+        <span id="ai-summarize-wrap" class="search-mode-wrap">
           <button id="ai-assist" class="composer-btn" type="button" aria-pressed="false" aria-describedby="ai-assist-tooltip">
             <span id="ai-assist-label">AI Assist</span>
           </button>
           <span id="ai-assist-tooltip" class="score-tooltip" role="tooltip">
             <span class="tooltip-title">AI Assist in Store mode</span>
-            <span class="tooltip-copy">Use the local model to organize longer material into thoughts and infer useful metadata. Press Tab to switch modes.</span>
+            <span class="tooltip-copy">Store your original text exactly as entered, then use the local model to add extra extracted thoughts and metadata. Press Tab to switch modes.</span>
+          </span>
+        </span>
+        <span class="search-mode-wrap">
+          <button id="ai-summarize" class="composer-btn" type="button" aria-pressed="false" aria-describedby="ai-summarize-tooltip">
+            <span>AI Summarize</span>
+          </button>
+          <span id="ai-summarize-tooltip" class="score-tooltip" role="tooltip">
+            <span class="tooltip-title">AI Summarize</span>
+            <span class="tooltip-copy">AI Assist expands your query before searching. AI Summarize explains the retrieved results.</span>
           </span>
         </span>
       </div>
@@ -209,6 +224,8 @@ const composerEl = document.getElementById('composer');
 const searchModeEl = document.getElementById('search-mode');
 const searchModeLabelEl = document.getElementById('search-mode-label');
 const aiAssistEl = document.getElementById('ai-assist');
+const aiSummarizeEl = document.getElementById('ai-summarize');
+const aiSummarizeWrapEl = document.getElementById('ai-summarize-wrap');
 const dotEl      = document.getElementById('dot');
 const statusEl   = document.getElementById('status-text');
 
@@ -222,6 +239,9 @@ try {
 
 function updateSurfaceMode(mode) {
   surfaceMode = mode === 'search' ? 'search' : 'store';
+  if (surfaceMode !== 'search') aiSummarizeEl.setAttribute('aria-pressed', 'false');
+  aiSummarizeEl.disabled = surfaceMode !== 'search';
+  aiSummarizeWrapEl.hidden = surfaceMode !== 'search';
   composerEl.classList.toggle('mode-search', surfaceMode === 'search');
   composerEl.classList.toggle('mode-store', surfaceMode === 'store');
   searchModeEl.setAttribute('aria-pressed', String(surfaceMode === 'search'));
@@ -237,8 +257,8 @@ function updateSurfaceMode(mode) {
   const assistCopy = document.querySelector('#ai-assist-tooltip .tooltip-copy');
   assistTitle.textContent = surfaceMode === 'search' ? 'AI Assist in Search mode' : 'AI Assist in Store mode';
   assistCopy.textContent = surfaceMode === 'search'
-    ? 'Use the local model to expand your query into related queries, then search for each one without changing your saved thoughts.'
-    : 'Use the local model to organize longer material into thoughts and infer useful metadata. If assistance fails, the original text is saved.';
+    ? 'Search your exact words several independent ways at once — exact wording and meaning — then combine the rankings. Notes found by more than one method rise to the top. No extra search terms are invented.'
+     : 'Store the original text exactly as entered, then use the local model to add extra extracted thoughts and metadata. If assistance fails, the original text is still saved.';
   try { localStorage.setItem('openbrain.surfaceMode', surfaceMode); } catch (_) { /* storage unavailable */ }
 }
 
@@ -467,6 +487,46 @@ function buildResultCard(row) {
   return card;
 }
 
+// The summary is an answer, not retrieval work, so it uses the same readable
+// Markdown note body as result cards with a distinct visual treatment.
+function buildSummaryCard(data) {
+  const card = el('article', 'result-card summary-card');
+  const meta = el('div', 'result-meta');
+  meta.appendChild(typeBadge('AI summary'));
+  meta.appendChild(document.createTextNode('Based on ' + data.summary_details.result_count + ' retrieved thoughts'));
+  card.appendChild(meta);
+  const body = el('div', 'result-body note-body summary-body');
+  renderNoteBody(data.summary || 'No summary was returned.', body);
+  card.appendChild(body);
+
+  const actions = el('div', 'result-actions');
+  card.appendChild(actions);
+  requestAnimationFrame(function() {
+    if (body.scrollHeight - body.clientHeight < 4) {
+      body.classList.add('expanded');
+      return;
+    }
+    const toggle = el('button', 'result-btn');
+    toggle.textContent = 'Show more';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.addEventListener('click', function(e) {
+      e.stopPropagation();
+      const expanded = body.classList.toggle('expanded');
+      toggle.textContent = expanded ? 'Show less' : 'Show more';
+      toggle.setAttribute('aria-expanded', String(expanded));
+    });
+    actions.appendChild(toggle);
+  });
+  return card;
+}
+
+// Plain-language description of each retrieval axis, shown in the work details
+// so the combined ranking is explainable rather than opaque.
+const AXIS_COPY = [
+  ['lexical', 'notes containing your exact words'],
+  ['semantic', 'notes that mean something similar'],
+];
+
 function appendSearchResults(data) {
   hideEmpty();
   const rows = Array.isArray(data.results) ? data.results : [];
@@ -479,20 +539,40 @@ function appendSearchResults(data) {
   head.appendChild(document.createTextNode(timeStr()));
   wrap.appendChild(head);
 
-  if (data.mode === 'assisted' && Array.isArray(data.expanded_queries) && data.expanded_queries.length) {
+  if (data.mode === 'assisted' && Array.isArray(data.axes_used) && data.axes_used.length) {
     const work = el('details', 'search-work');
     const summary = el('summary');
-    summary.appendChild(document.createTextNode('AI-assisted search · expanded into ' + data.expanded_queries.length + ' queries'));
+    summary.appendChild(document.createTextNode(
+      'Multi-axis search \u00b7 ' + data.axes_used.join(', ') + ' \u00b7 ' + rows.length + ' results'));
     work.appendChild(summary);
     const content = el('div', 'search-work-content');
-    content.appendChild(document.createTextNode('The local model generated these retrieval queries:'));
-    data.expanded_queries.forEach(function(query) {
+    content.appendChild(document.createTextNode(
+      'Your exact words were searched several independent ways and the rankings were combined. ' +
+      'No extra search terms were invented. Notes ranked highly by more than one method rise to the top.'));
+    AXIS_COPY.forEach(function(entry) {
+      if (data.axes_used.indexOf(entry[0]) === -1) return;
       const line = el('span', 'search-query');
-      line.textContent = query;
+      line.textContent = entry[0] + ' — ' + entry[1];
       content.appendChild(line);
     });
     work.appendChild(content);
     wrap.appendChild(work);
+  }
+
+  if (data.summary_details) {
+    if (data.summary_details.error) {
+      const work = el('details', 'search-work');
+      work.open = true;
+      const summary = el('summary');
+      summary.textContent = 'AI summary · based on ' + data.summary_details.result_count + ' retrieved thoughts';
+      work.appendChild(summary);
+      const content = el('div', 'search-work-content');
+      content.textContent = 'The local model could not summarize these results: ' + data.summary_details.error;
+      work.appendChild(content);
+      wrap.appendChild(work);
+    } else {
+      wrap.appendChild(buildSummaryCard(data));
+    }
   }
 
   if (!rows.length) {
@@ -774,6 +854,7 @@ function submitMessage(text, explicitIntent, showUser) {
   if (explicitIntent) message.intent = explicitIntent;
   message.surface_mode = surfaceMode;
   message.ai_assist = aiAssistEl.getAttribute('aria-pressed') === 'true';
+  message.ai_summarize = surfaceMode === 'search' && aiSummarizeEl.getAttribute('aria-pressed') === 'true';
   ws.send(JSON.stringify(message));
   showTyping();
   inputEl.style.height = 'auto';
@@ -794,6 +875,12 @@ searchModeEl.addEventListener('click', function() {
 aiAssistEl.addEventListener('click', function() {
   const enabled = aiAssistEl.getAttribute('aria-pressed') !== 'true';
   aiAssistEl.setAttribute('aria-pressed', String(enabled));
+});
+
+aiSummarizeEl.addEventListener('click', function() {
+  if (surfaceMode !== 'search') return;
+  const enabled = aiSummarizeEl.getAttribute('aria-pressed') !== 'true';
+  aiSummarizeEl.setAttribute('aria-pressed', String(enabled));
 });
 
 inputEl.addEventListener('keydown', function(e) {

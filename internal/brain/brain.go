@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -21,15 +20,16 @@ import (
 	"github.com/windingriverholdings/openbrain/internal/extract"
 	"github.com/windingriverholdings/openbrain/internal/intent"
 	"github.com/windingriverholdings/openbrain/internal/model"
-	"github.com/windingriverholdings/openbrain/internal/queryexpand"
+	"github.com/windingriverholdings/openbrain/internal/rankfuse"
+	"github.com/windingriverholdings/openbrain/internal/summarize"
 )
 
 // Brain orchestrates intent dispatch using an embedder and database pool.
 type Brain struct {
-	pool     *pgxpool.Pool
-	embedder embeddings.Embedder
-	cfg      *config.Config
-	expander queryexpand.Expander
+	pool       *pgxpool.Pool
+	embedder   embeddings.Embedder
+	cfg        *config.Config
+	summarizer summarize.Provider
 
 	// extractFn and captureFn are seams over the LLM extraction call and the
 	// single-note fallback capture, defaulted in New to the real
@@ -66,10 +66,10 @@ type Brain struct {
 // New creates a Brain with the given dependencies.
 func New(pool *pgxpool.Pool, embedder embeddings.Embedder, cfg *config.Config) *Brain {
 	b := &Brain{pool: pool, embedder: embedder, cfg: cfg}
-	if expander, err := queryexpand.New(cfg); err == nil {
-		b.expander = expander
+	if summarizerProvider, err := summarize.New(cfg); err == nil {
+		b.summarizer = summarizerProvider
 	} else {
-		slog.Warn("assisted search unavailable", "error", err)
+		slog.Warn("search summarization unavailable", "error", err)
 	}
 	b.extractFn = extract.ExtractThoughts
 	b.captureFn = b.Capture
@@ -119,9 +119,9 @@ func (b *Brain) SetStoreFnForTesting(
 	}
 }
 
-// SetExpanderForTesting injects a deterministic query expander for tests.
-func (b *Brain) SetExpanderForTesting(expander queryexpand.Expander) {
-	b.expander = expander
+// SetSummarizerForTesting injects a deterministic search summarizer for tests.
+func (b *Brain) SetSummarizerForTesting(provider summarize.Provider) {
+	b.summarizer = provider
 }
 
 // Dispatch routes a parsed intent to the appropriate handler.
@@ -189,6 +189,10 @@ type SearchOpts struct {
 	IncludeHistory bool
 	CreatedFrom    *time.Time // inclusive lower bound on created_at; nil = unbounded
 	CreatedTo      *time.Time // inclusive upper bound on created_at; nil = unbounded
+
+	// TopK caps the number of returned rows. Zero means "use the configured
+	// default", so existing callers keep their current behavior.
+	TopK int
 }
 
 // CaptureDetails describes the work performed by AI-assisted storage.
@@ -197,17 +201,45 @@ type CaptureDetails struct {
 	Extracted         []extract.Candidate `json:"extracted,omitempty"`
 }
 
-// SearchDetails contains retrieval results plus the optional work performed
-// before retrieval. ExpandedQueries is populated only for assisted searches.
+// SearchDetails contains retrieval results plus a description of the retrieval
+// work performed. AxesUsed names the independent retrieval strategies whose
+// rankings were fused, and is populated only for assisted searches.
 type SearchDetails struct {
-	Results         []model.ThoughtRow
-	ExpandedQueries []string
+	Results  []model.ThoughtRow
+	AxesUsed []string
+}
+
+// SummaryDetails describes a read-only summary of retrieved search results.
+type SummaryDetails struct {
+	Summary     string
+	ResultCount int
+	ModelUsed   string
+}
+
+// SummarizeSearch summarizes the supplied results without changing retrieval or storage.
+func (b *Brain) SummarizeSearch(ctx context.Context, query string, results []model.ThoughtRow) (SummaryDetails, error) {
+	if b.summarizer == nil {
+		return SummaryDetails{}, fmt.Errorf("search summarization is unavailable: configure a local LLM model")
+	}
+	text, err := b.summarizer.Summarize(ctx, query, results)
+	if err != nil {
+		return SummaryDetails{}, err
+	}
+	details := SummaryDetails{Summary: text, ResultCount: len(results)}
+	if named, ok := b.summarizer.(summarize.ModelNamer); ok {
+		details.ModelUsed = named.ModelName()
+	}
+	return details, nil
 }
 
 // filteredSearchMinThreshold is the default minimum score threshold used when
 // a type filter is applied, since filtered searches on small corpora need more
 // lenient scoring than unfiltered searches.
 const filteredSearchMinThreshold = 0.01
+
+// defaultSearchTopK is the last-resort row cap when configuration supplies no
+// value, so a zero-valued config can never silently return no rows.
+const defaultSearchTopK = 10
 
 // effectiveThreshold returns a lowered score threshold when a type filter
 // is applied, since filtered searches on small corpora need more lenient scoring.
@@ -243,10 +275,11 @@ func (b *Brain) SearchWithDetails(ctx context.Context, query string, opts Search
 		filteredThresh = filteredSearchMinThreshold
 	}
 	threshold := effectiveThreshold(b.cfg.SearchScoreThreshold, filteredThresh, opts)
+	topK := b.resolveTopK(opts)
 
 	switch opts.Mode {
 	case "keyword":
-		rows, err := db.KeywordSearchThoughts(ctx, b.pool, query, b.cfg.SearchTopK, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
+		rows, err := db.KeywordSearchThoughts(ctx, b.pool, query, topK, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
 		return SearchDetails{Results: rows}, err
 	case "assisted":
 		return b.assistedSearch(ctx, query, opts, threshold)
@@ -256,7 +289,7 @@ func (b *Brain) SearchWithDetails(ctx context.Context, query string, opts Search
 			slog.Error("search: embed failed", "mode", opts.Mode, "query_len", len(query), "error", err)
 			return SearchDetails{}, fmt.Errorf("embed query: %w", err)
 		}
-		rows, err := db.SearchThoughts(ctx, b.pool, embedding, b.cfg.SearchTopK, opts.ThoughtType, opts.Tags, threshold, opts.CreatedFrom, opts.CreatedTo)
+		rows, err := db.SearchThoughts(ctx, b.pool, embedding, topK, opts.ThoughtType, opts.Tags, threshold, opts.CreatedFrom, opts.CreatedTo)
 		return SearchDetails{Results: rows}, err
 	default:
 		embedding, err := b.embedder.Embed(ctx, query)
@@ -264,51 +297,99 @@ func (b *Brain) SearchWithDetails(ctx context.Context, query string, opts Search
 			slog.Error("search: embed failed", "mode", opts.Mode, "query_len", len(query), "error", err)
 			return SearchDetails{}, fmt.Errorf("embed query: %w", err)
 		}
-		rows, err := db.HybridSearchThoughts(ctx, b.pool, query, embedding, b.cfg.SearchTopK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim)
+		rows, err := db.HybridSearchThoughts(ctx, b.pool, query, embedding, topK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim)
 		return SearchDetails{Results: rows}, err
 	}
 }
 
-func (b *Brain) assistedSearch(ctx context.Context, query string, opts SearchOpts, threshold float64) (SearchDetails, error) {
-	if b.expander == nil {
-		return SearchDetails{}, fmt.Errorf("assisted search is unavailable: configure a local LLM model")
+// resolveTopK returns the row cap for a search: the explicit per-call TopK when
+// set, otherwise the configured default. Assisted search retrieves more deeply
+// because it fuses several ranked lists and needs candidates from each.
+func (b *Brain) resolveTopK(opts SearchOpts) int {
+	if opts.TopK > 0 {
+		return opts.TopK
 	}
-	queries, err := b.expander.Expand(ctx, query)
-	if err != nil {
-		return SearchDetails{}, err
+	if opts.Mode == "assisted" && b.cfg.SearchAssistedTopK > 0 {
+		return b.cfg.SearchAssistedTopK
 	}
-	merged := make(map[string]model.ThoughtRow)
-	for _, expanded := range queries {
-		embedding, err := b.embedder.Embed(ctx, expanded)
-		if err != nil {
-			return SearchDetails{}, fmt.Errorf("embed assisted query: %w", err)
-		}
-		rows, err := db.HybridSearchThoughts(ctx, b.pool, expanded, embedding, b.cfg.SearchTopK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim)
-		if err != nil {
-			return SearchDetails{}, err
-		}
-		for _, row := range rows {
-			if previous, ok := merged[row.ID]; !ok || score(row) > score(previous) {
-				merged[row.ID] = row
-			}
-		}
+	if b.cfg.SearchTopK > 0 {
+		return b.cfg.SearchTopK
 	}
-	results := make([]model.ThoughtRow, 0, len(merged))
-	for _, row := range merged {
-		results = append(results, row)
-	}
-	sort.SliceStable(results, func(i, j int) bool { return score(results[i]) > score(results[j]) })
-	if len(results) > b.cfg.SearchTopK {
-		results = results[:b.cfg.SearchTopK]
-	}
-	return SearchDetails{Results: results, ExpandedQueries: queries}, nil
+	return defaultSearchTopK
 }
 
-func score(row model.ThoughtRow) float64 {
-	if row.Score == nil {
-		return 0
+// rrfK returns the reciprocal-rank-fusion damping constant.
+func (b *Brain) rrfK() int {
+	if b.cfg != nil && b.cfg.SearchRRFK > 0 {
+		return b.cfg.SearchRRFK
 	}
-	return *row.Score
+	return rankfuse.DefaultK
+}
+
+// assistedSearch retrieves along several independent axes and fuses their
+// rankings. It deliberately does NOT ask a model to invent related search
+// terms: that added vocabulary absent from the corpus and spent retrieval
+// slots on it. Instead the literal query is run through two genuinely
+// different retrieval strategies and combined by rank.
+//
+// Fusing by rank rather than by score matters because the two strategies emit
+// incomparable numbers: full-text rank values are small (~0.05-0.3) while
+// cosine similarity is large (~0.5-0.8). Summing them lets semantic similarity
+// dominate, which buries exact matches on rare terms such as project
+// codenames. Reciprocal rank fusion only reads positions, so a first-place
+// lexical hit counts as much as a first-place semantic hit.
+func (b *Brain) assistedSearch(ctx context.Context, query string, opts SearchOpts, threshold float64) (SearchDetails, error) {
+	topK := b.resolveTopK(opts)
+
+	type axis struct {
+		name string
+		rows []model.ThoughtRow
+	}
+	var axes []axis
+
+	// Lexical axis: exact wording. This is the strongest available signal for
+	// rare proper nouns, and the one the blended score used to discount.
+	lexical, lexErr := db.KeywordSearchThoughts(ctx, b.pool, query, topK, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
+	if lexErr != nil {
+		slog.Warn("assisted search: lexical axis failed", "error", lexErr)
+	} else if len(lexical) > 0 {
+		axes = append(axes, axis{name: "lexical", rows: lexical})
+	}
+
+	// Semantic axis: meaning, including paraphrases that share no keywords.
+	embedding, embedErr := b.embedder.Embed(ctx, query)
+	var semErr error
+	if embedErr != nil {
+		semErr = fmt.Errorf("embed query: %w", embedErr)
+		slog.Warn("assisted search: semantic axis failed", "error", semErr)
+	} else {
+		semantic, err := db.HybridSearchThoughts(ctx, b.pool, query, embedding, topK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim)
+		if err != nil {
+			semErr = err
+			slog.Warn("assisted search: semantic axis failed", "error", err)
+		} else if len(semantic) > 0 {
+			axes = append(axes, axis{name: "semantic", rows: semantic})
+		}
+	}
+
+	// Retrieval stays authoritative: only fail when every axis failed. An axis
+	// that simply matched nothing is not an error.
+	if lexErr != nil && semErr != nil {
+		return SearchDetails{}, fmt.Errorf("assisted search: every retrieval axis failed: lexical: %v; semantic: %v", lexErr, semErr)
+	}
+
+	lists := make([][]model.ThoughtRow, 0, len(axes))
+	names := make([]string, 0, len(axes))
+	for _, a := range axes {
+		lists = append(lists, a.rows)
+		names = append(names, a.name)
+	}
+
+	results := rankfuse.FuseRRF(b.rrfK(), lists...)
+	if len(results) > topK {
+		results = results[:topK]
+	}
+	return SearchDetails{Results: results, AxesUsed: names}, nil
 }
 
 // GetStats returns aggregate brain statistics.

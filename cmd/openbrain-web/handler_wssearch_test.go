@@ -85,6 +85,24 @@ func TestWsResponse_SearchIncludesResults(t *testing.T) {
 		"content must remain populated for search so non-card clients still work")
 }
 
+func TestWsResponse_SearchSummaryIncludesDetails(t *testing.T) {
+	rows := []wsSearchResult{{ID: "abc-123", Content: "use Redis"}}
+	data, err := json.Marshal(wsResponse{
+		Intent: "search", Results: &rows,
+		Summary:        "Caching decisions favor Redis.",
+		SummaryDetails: &summaryDetails{ResultCount: 1, ModelUsed: "gemma3"},
+	})
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+	assert.Equal(t, "Caching decisions favor Redis.", raw["summary"])
+	details, ok := raw["summary_details"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(1), details["result_count"])
+	assert.Equal(t, "gemma3", details["model_used"])
+}
+
 // ── toWSSearchResults ───────────────────────────────────────────────────────
 
 func TestToWSSearchResults_MapsAllFields(t *testing.T) {
@@ -226,7 +244,6 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	assert.Contains(t, page, "semantic similarity (70%) and keyword matching (30%)")
 	assert.Contains(t, page, "tooltip-title")
 	assert.Contains(t, page, "aria-describedby=\"search-mode-tooltip\"")
-	assert.Contains(t, page, "expand your query into related queries")
 	assert.Contains(t, page, "score.setAttribute('aria-label', 'Relevance score '")
 
 	// Clamped preview with an expand toggle.
@@ -250,11 +267,24 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	assert.Contains(t, page, "localStorage.getItem(DETAIL_WIDTH_KEY)")
 	assert.Contains(t, page, "setPointerCapture")
 	assert.Contains(t, page, "clampDetailWidth")
-	assert.Contains(t, page, "AI-assisted search")
+	assert.Contains(t, page, "Multi-axis search")
 	assert.Contains(t, page, "search-work")
-	assert.Contains(t, page, "expanded_queries")
+	assert.Contains(t, page, "axes_used")
+	assert.Contains(t, page, "No extra search terms were invented")
+	assert.Contains(t, page, "notes containing your exact words")
 	assert.Contains(t, page, "surface_mode")
 	assert.Contains(t, page, "ai_assist")
+	assert.Contains(t, page, "AI Summarize")
+	assert.Contains(t, page, "ai_summarize")
+	assert.Contains(t, page, "summary_details")
+	assert.Contains(t, page, `#ai-summarize[aria-pressed="true"]`)
+	assert.Contains(t, page, `aiSummarizeWrapEl.hidden = surfaceMode !== 'search'`)
+	assert.Contains(t, page, "function buildSummaryCard(data)")
+	assert.Contains(t, page, "summary-card")
+	assert.Contains(t, page, "renderNoteBody(data.summary")
+	assert.Contains(t, page, "summary-body")
+	assert.Contains(t, page, "Store the original text exactly as entered")
+	assert.Contains(t, page, "add extra extracted thoughts")
 	assert.Contains(t, page, "What would you like to remember?")
 	assert.Contains(t, page, "e.key === 'Tab'")
 	assert.Contains(t, page, "mode-store")

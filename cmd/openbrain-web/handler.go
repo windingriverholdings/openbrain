@@ -502,6 +502,7 @@ type wsMessage struct {
 	Mode        string `json:"mode,omitempty"`
 	SurfaceMode string `json:"surface_mode,omitempty"`
 	AIAssist    bool   `json:"ai_assist,omitempty"`
+	AISummarize bool   `json:"ai_summarize,omitempty"`
 }
 
 // wsSearchResult is one structured search hit sent to the chat UI. The field
@@ -538,10 +539,19 @@ type wsResponse struct {
 	Ambiguous       bool              `json:"ambiguous,omitempty"`
 	Query           string            `json:"query,omitempty"`
 	Mode            string            `json:"mode,omitempty"`
-	ExpandedQueries []string          `json:"expanded_queries,omitempty"`
+	AxesUsed        []string          `json:"axes_used,omitempty"`
 	SurfaceMode     string            `json:"surface_mode,omitempty"`
 	AIAssist        bool              `json:"ai_assist,omitempty"`
+	AISummarize     bool              `json:"ai_summarize,omitempty"`
 	CaptureDetails  *captureDetails   `json:"capture_details,omitempty"`
+	Summary         string            `json:"summary,omitempty"`
+	SummaryDetails  *summaryDetails   `json:"summary_details,omitempty"`
+}
+
+type summaryDetails struct {
+	ResultCount int    `json:"result_count"`
+	ModelUsed   string `json:"model_used,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type captureDetails struct {
@@ -671,6 +681,7 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 				ThoughtType: parsed.ThoughtType,
 				SurfaceMode: surfaceMode,
 				AIAssist:    msg.AIAssist,
+				AISummarize: msg.AISummarize && surfaceMode == "search",
 			}
 			if parsed.Intent == intent.Ambiguous {
 				resp.Ambiguous = true
@@ -699,7 +710,7 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 				if mode == "" {
 					mode = "hybrid"
 				}
-				if mode != "hybrid" && mode != "assisted" {
+				if mode != "hybrid" && mode != "assisted" && mode != "vector" && mode != "keyword" {
 					resp.Content = "Error: invalid search mode"
 					if err := conn.WriteJSON(resp); err != nil {
 						return
@@ -714,7 +725,18 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 					results := toWSSearchResults(details.Results)
 					resp.Results = &results
 					resp.Mode = mode
-					resp.ExpandedQueries = details.ExpandedQueries
+					resp.AxesUsed = details.AxesUsed
+					if msg.AISummarize && surfaceMode == "search" {
+						resp.SummaryDetails = &summaryDetails{ResultCount: len(details.Results)}
+						summary, summaryErr := b.SummarizeSearch(r.Context(), parsed.Text, details.Results)
+						if summaryErr != nil {
+							resp.SummaryDetails.Error = summaryErr.Error()
+						} else {
+							resp.Summary = summary.Summary
+							resp.SummaryDetails.ResultCount = summary.ResultCount
+							resp.SummaryDetails.ModelUsed = summary.ModelUsed
+						}
+					}
 				}
 			} else {
 				if msg.AIAssist && surfaceMode == "store" && (parsed.Intent == intent.Capture || parsed.Intent == intent.Extract) {
