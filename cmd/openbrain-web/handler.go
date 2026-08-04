@@ -497,9 +497,11 @@ func apiReview(b *brain.Brain) http.HandlerFunc {
 }
 
 type wsMessage struct {
-	Message string `json:"message"`
-	Intent  string `json:"intent,omitempty"`
-	Mode    string `json:"mode,omitempty"`
+	Message     string `json:"message"`
+	Intent      string `json:"intent,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	SurfaceMode string `json:"surface_mode,omitempty"`
+	AIAssist    bool   `json:"ai_assist,omitempty"`
 }
 
 // wsSearchResult is one structured search hit sent to the chat UI. The field
@@ -510,13 +512,14 @@ type wsMessage struct {
 // Unlike apiSearchNodes, Content is NOT truncated: the chat UI clamps long
 // bodies visually and expands them in place, so it needs the full text.
 type wsSearchResult struct {
-	ID        string   `json:"id"`
-	Score     float64  `json:"score"`
-	Type      string   `json:"type"`
-	Tags      []string `json:"tags"`
-	Summary   string   `json:"summary"`
-	Content   string   `json:"content"`
-	CreatedAt string   `json:"created_at"`
+	ID        string         `json:"id"`
+	Score     float64        `json:"score"`
+	Type      string         `json:"type"`
+	Tags      []string       `json:"tags"`
+	Summary   string         `json:"summary"`
+	Content   string         `json:"content"`
+	CreatedAt string         `json:"created_at"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
 // wsResponse is the websocket reply envelope.
@@ -536,6 +539,20 @@ type wsResponse struct {
 	Query           string            `json:"query,omitempty"`
 	Mode            string            `json:"mode,omitempty"`
 	ExpandedQueries []string          `json:"expanded_queries,omitempty"`
+	SurfaceMode     string            `json:"surface_mode,omitempty"`
+	AIAssist        bool              `json:"ai_assist,omitempty"`
+	CaptureDetails  *captureDetails   `json:"capture_details,omitempty"`
+}
+
+type captureDetails struct {
+	OriginalPreserved bool             `json:"original_preserved"`
+	Extracted         []captureThought `json:"extracted,omitempty"`
+}
+
+type captureThought struct {
+	Content     string   `json:"content"`
+	ThoughtType string   `json:"thought_type"`
+	Tags        []string `json:"tags,omitempty"`
 }
 
 // toWSSearchResults converts search rows into the structured websocket payload.
@@ -564,6 +581,7 @@ func toWSSearchResults(rows []model.ThoughtRow) []wsSearchResult {
 			Summary:   summary,
 			Content:   row.Content,
 			CreatedAt: row.CreatedAt.Format("2006-01-02"),
+			Metadata:  row.Metadata,
 		})
 	}
 	return results
@@ -631,10 +649,28 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 					parsed.ThoughtType = intent.InferType(msg.Message)
 				}
 			}
+			// Explicit composer modes control ordinary capture/search input. Keep
+			// administrative and explicit action commands classified by the parser.
+			surfaceMode := msg.SurfaceMode
+			if surfaceMode != "store" && surfaceMode != "search" {
+				surfaceMode = ""
+			}
+			if surfaceMode == "store" && (parsed.Intent == intent.Search || parsed.Intent == intent.Ambiguous) {
+				parsed.Intent = intent.Capture
+				parsed.Text = msg.Message
+				parsed.ThoughtType = intent.InferType(msg.Message)
+			}
+			if surfaceMode == "search" && (parsed.Intent == intent.Capture || parsed.Intent == intent.Extract || parsed.Intent == intent.Ambiguous) {
+				parsed.Intent = intent.Search
+				parsed.Text = msg.Message
+				parsed.ThoughtType = "note"
+			}
 
 			resp := wsResponse{
 				Intent:      string(parsed.Intent),
 				ThoughtType: parsed.ThoughtType,
+				SurfaceMode: surfaceMode,
+				AIAssist:    msg.AIAssist,
 			}
 			if parsed.Intent == intent.Ambiguous {
 				resp.Ambiguous = true
@@ -657,6 +693,9 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 			// formatter, so it is byte-identical to the old reply.
 			if parsed.Intent == intent.Search {
 				mode := msg.Mode
+				if msg.AIAssist && surfaceMode == "search" {
+					mode = "assisted"
+				}
 				if mode == "" {
 					mode = "hybrid"
 				}
@@ -678,11 +717,30 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 					resp.ExpandedQueries = details.ExpandedQueries
 				}
 			} else {
-				result, err := b.Dispatch(r.Context(), parsed, "web")
+				if msg.AIAssist && surfaceMode == "store" && (parsed.Intent == intent.Capture || parsed.Intent == intent.Extract) {
+					parsed.Intent = intent.Extract
+					resp.Intent = string(intent.Extract)
+				}
+				var result string
+				var captureInfo *captureDetails
+				var err error
+				if msg.AIAssist && surfaceMode == "store" && parsed.Intent == intent.Extract {
+					var details brain.CaptureDetails
+					result, details, err = b.DeepCaptureWithDetails(r.Context(), parsed, "web")
+					captureInfo = &captureDetails{OriginalPreserved: details.OriginalPreserved}
+					for _, candidate := range details.Extracted {
+						captureInfo.Extracted = append(captureInfo.Extracted, captureThought{
+							Content: candidate.Content, ThoughtType: candidate.ThoughtType, Tags: candidate.Tags,
+						})
+					}
+				} else {
+					result, err = b.Dispatch(r.Context(), parsed, "web")
+				}
 				if err != nil {
 					result = fmt.Sprintf("Error: %v", err)
 				}
 				resp.Content = result
+				resp.CaptureDetails = captureInfo
 			}
 
 			if err := conn.WriteJSON(resp); err != nil {

@@ -19,7 +19,7 @@
     header .status { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-dim); }
     header .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); transition: background 0.3s; }
     header .dot.connected { background: var(--green); }
-    #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
+    #messages { flex: 1; overflow-y: auto; padding: 20px 20px 150px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
     #messages::-webkit-scrollbar { width: 4px; }
     #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
     .msg { display: flex; flex-direction: column; max-width: 78%; gap: 4px; animation: fadeIn 0.15s ease; }
@@ -44,9 +44,11 @@
     .dot-pulse:nth-child(2) { animation-delay: 0.2s; }
     .dot-pulse:nth-child(3) { animation-delay: 0.4s; }
     @keyframes pulse { 0%,80%,100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
-    #input-bar { padding: 18px 20px 20px; background: var(--bg); flex-shrink: 0; }
-    #composer { width: min(100%, 980px); margin: 0 auto; display: flex; flex-direction: column; gap: 0; border: 1px solid rgba(156,163,175,0.22); border-radius: 26px; background: rgba(255,255,255,0.045); box-shadow: 0 12px 35px rgba(0,0,0,0.22); backdrop-filter: blur(14px); transition: border-color 0.2s, box-shadow 0.2s; }
-    #composer:focus-within { border-color: rgba(108,142,245,0.55); box-shadow: 0 12px 35px rgba(0,0,0,0.28), 0 0 0 3px rgba(108,142,245,0.08); }
+    #input-bar { position: fixed; right: 0; bottom: 0; left: 0; padding: 18px 20px 20px; background: transparent; z-index: 2; pointer-events: none; }
+    #composer { pointer-events: auto; }
+    #composer { --mode-color: var(--amber); --mode-color-soft: rgba(251,191,36,0.14); width: min(100%, 980px); margin: 0 auto; display: flex; flex-direction: column; gap: 0; border: 1px solid rgba(156,163,175,0.22); border-radius: 26px; background: rgba(255,255,255,0.045); box-shadow: 0 12px 35px rgba(0,0,0,0.22); backdrop-filter: blur(14px); transition: border-color 0.2s, box-shadow 0.2s; }
+    #composer.mode-search { --mode-color: var(--accent); --mode-color-soft: rgba(108,142,245,0.16); }
+    #composer:focus-within { border-color: color-mix(in srgb, var(--mode-color) 55%, transparent); box-shadow: 0 12px 35px rgba(0,0,0,0.28), 0 0 0 3px color-mix(in srgb, var(--mode-color) 10%, transparent); }
     #input { width: 100%; background: transparent; border: 0; border-radius: 26px; padding: 17px 18px 8px; color: var(--text); font-family: var(--font); font-size: 1rem; outline: none; resize: none; line-height: 1.5; min-height: 58px; max-height: 150px; }
     #input::placeholder { color: var(--text-dim); }
     #composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px 8px; }
@@ -54,10 +56,11 @@
     .composer-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 9px; border: 0; border-radius: 999px; background: transparent; color: var(--text-dim); font: 500 0.76rem var(--font); cursor: pointer; transition: color 0.15s, background 0.15s; }
     .composer-btn:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,0.08); }
     .composer-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; }
-    #search-mode[aria-pressed="true"] { color: #a9baff; background: rgba(108,142,245,0.16); box-shadow: inset 0 0 0 1px rgba(108,142,245,0.25); }
-    #search-mode[aria-pressed="true"] .mode-dot { background: var(--accent); box-shadow: 0 0 0 3px rgba(108,142,245,0.15); }
-    .mode-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); transition: background 0.15s, box-shadow 0.15s; }
-    #send { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); border: none; border-radius: 50%; color: #fff; cursor: pointer; transition: opacity 0.15s, transform 0.15s; flex-shrink: 0; }
+    #search-mode[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
+    #ai-assist[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
+    #search-mode[aria-pressed="true"] .mode-dot { background: var(--mode-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode-color) 16%, transparent); }
+    .mode-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mode-color); transition: background 0.15s, box-shadow 0.15s; }
+    #send { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; background: var(--mode-color); border: none; border-radius: 50%; color: #fff; cursor: pointer; transition: opacity 0.15s, transform 0.15s; flex-shrink: 0; }
     #send:hover:not(:disabled) { opacity: 0.88; transform: scale(1.04); }
     #send:disabled { opacity: 0.35; cursor: not-allowed; }
     #send svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -164,11 +167,20 @@
         <span class="search-mode-wrap">
           <button id="search-mode" class="composer-btn" type="button" aria-pressed="false" aria-describedby="search-mode-tooltip">
             <span class="mode-dot" aria-hidden="true"></span>
-            <span id="search-mode-label">Standard search</span>
+            <span id="search-mode-label">Store</span>
           </button>
           <span id="search-mode-tooltip" class="score-tooltip" role="tooltip">
-            <span class="tooltip-title">Standard search</span>
-            <span class="tooltip-copy">Searches your saved thoughts using semantic similarity and keyword matching together. It is fast, predictable, and uses your original query as written.</span>
+            <span class="tooltip-title">Store mode</span>
+            <span class="tooltip-copy">Save what you enter to your knowledge base. Press Tab to switch to Search mode.</span>
+          </span>
+        </span>
+        <span class="search-mode-wrap">
+          <button id="ai-assist" class="composer-btn" type="button" aria-pressed="false" aria-describedby="ai-assist-tooltip">
+            <span id="ai-assist-label">AI Assist</span>
+          </button>
+          <span id="ai-assist-tooltip" class="score-tooltip" role="tooltip">
+            <span class="tooltip-title">AI Assist in Store mode</span>
+            <span class="tooltip-copy">Use the local model to organize longer material into thoughts and infer useful metadata. Press Tab to switch modes.</span>
           </span>
         </span>
       </div>
@@ -193,12 +205,42 @@ const messagesEl = document.getElementById('messages');
 const emptyEl    = document.getElementById('empty');
 const inputEl    = document.getElementById('input');
 const sendBtn    = document.getElementById('send');
+const composerEl = document.getElementById('composer');
 const searchModeEl = document.getElementById('search-mode');
 const searchModeLabelEl = document.getElementById('search-mode-label');
+const aiAssistEl = document.getElementById('ai-assist');
 const dotEl      = document.getElementById('dot');
 const statusEl   = document.getElementById('status-text');
 
 function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+
+let surfaceMode = 'store';
+try {
+  const savedMode = localStorage.getItem('openbrain.surfaceMode');
+  if (savedMode === 'search' || savedMode === 'store') surfaceMode = savedMode;
+} catch (_) { /* storage unavailable */ }
+
+function updateSurfaceMode(mode) {
+  surfaceMode = mode === 'search' ? 'search' : 'store';
+  composerEl.classList.toggle('mode-search', surfaceMode === 'search');
+  composerEl.classList.toggle('mode-store', surfaceMode === 'store');
+  searchModeEl.setAttribute('aria-pressed', String(surfaceMode === 'search'));
+  searchModeLabelEl.textContent = surfaceMode === 'search' ? 'Search' : 'Store';
+  inputEl.placeholder = surfaceMode === 'search' ? 'What would you like to find?' : 'What would you like to remember?';
+  const title = document.querySelector('#search-mode-tooltip .tooltip-title');
+  const copy = document.querySelector('#search-mode-tooltip .tooltip-copy');
+  title.textContent = surfaceMode === 'search' ? 'Search mode' : 'Store mode';
+  copy.textContent = surfaceMode === 'search'
+    ? 'Find saved thoughts using semantic similarity and keyword matching. Press Tab to switch to Store mode.'
+    : 'Save what you enter to your knowledge base. Press Tab to switch to Search mode.';
+  const assistTitle = document.querySelector('#ai-assist-tooltip .tooltip-title');
+  const assistCopy = document.querySelector('#ai-assist-tooltip .tooltip-copy');
+  assistTitle.textContent = surfaceMode === 'search' ? 'AI Assist in Search mode' : 'AI Assist in Store mode';
+  assistCopy.textContent = surfaceMode === 'search'
+    ? 'Use the local model to expand your query into related queries, then search for each one without changing your saved thoughts.'
+    : 'Use the local model to organize longer material into thoughts and infer useful metadata. If assistance fails, the original text is saved.';
+  try { localStorage.setItem('openbrain.surfaceMode', surfaceMode); } catch (_) { /* storage unavailable */ }
+}
 
 // Safe markdown rendering — splits text on tokens, builds DOM nodes, no innerHTML for content
 function renderMarkdownSafe(text, container) {
@@ -355,11 +397,16 @@ function buildResultCard(row) {
   if (row.created_at) {
     meta.appendChild(document.createTextNode(row.created_at));
   }
-  (row.tags || []).forEach(function(tag) {
+    (row.tags || []).forEach(function(tag) {
     const t = el('span', 'result-tag');
     t.textContent = tag;
-    meta.appendChild(t);
-  });
+      meta.appendChild(t);
+    });
+  if (row.metadata && row.metadata.capture_role) {
+    const role = el('span', 'result-tag');
+    role.textContent = row.metadata.capture_role === 'original_source' ? 'Original source' : 'AI-extracted thought';
+    meta.appendChild(role);
+  }
   if (typeof row.score === 'number') {
     const scoreWrap = el('span', 'result-score-wrap');
     const score = el('span', 'result-score');
@@ -458,6 +505,27 @@ function appendSearchResults(data) {
 
   messagesEl.appendChild(wrap);
   scrollBottom();
+}
+
+function appendCaptureDetails(data, content) {
+  if (!data.capture_details) return;
+  const details = data.capture_details;
+  const work = el('details', 'search-work');
+  const summary = el('summary');
+  const count = Array.isArray(details.extracted) ? details.extracted.length : 0;
+  summary.textContent = 'AI-assisted storage · preserved original and extracted ' + count + ' thoughts';
+  work.appendChild(summary);
+  const body = el('div', 'search-work-content');
+  body.appendChild(document.createTextNode(details.original_preserved
+    ? 'The original text was stored verbatim. The local model organized it into these additional thoughts:'
+    : 'The original text was stored as a fallback note.'));
+  (details.extracted || []).forEach(function(thought) {
+    const line = el('span', 'search-query');
+    line.textContent = '[' + (thought.thought_type || 'note') + '] ' + thought.content;
+    body.appendChild(line);
+  });
+  work.appendChild(body);
+  content.appendChild(work);
 }
 
 // ── note detail panel ───────────────────────────────────────────────────────
@@ -575,6 +643,11 @@ async function openDetail(id) {
       el2.textContent = tag;
       meta.appendChild(el2);
     });
+    if (t.metadata && t.metadata.capture_role) {
+      const role = el('span', 'result-tag');
+      role.textContent = t.metadata.capture_role === 'original_source' ? 'Original source' : 'AI-extracted thought';
+      meta.appendChild(role);
+    }
     detailContent.appendChild(meta);
 
     if (t.summary) {
@@ -676,6 +749,18 @@ function connect() {
       appendSearchResults(data);
       return;
     }
+    if (data.capture_details) {
+      const wrap = el('div', 'results');
+      const response = el('div', 'msg brain');
+      const bubble = el('div', 'bubble');
+      bubble.textContent = data.content || '';
+      response.appendChild(bubble);
+      wrap.appendChild(response);
+      appendCaptureDetails(data, wrap);
+      messagesEl.appendChild(wrap);
+      scrollBottom();
+      return;
+    }
     appendBrain(data.content || '', data.intent || '', data.thought_type || '');
   };
 }
@@ -687,7 +772,8 @@ function submitMessage(text, explicitIntent, showUser) {
   if (showUser !== false) appendUser(text);
   const message = { message: text };
   if (explicitIntent) message.intent = explicitIntent;
-  if (!explicitIntent && searchModeEl.getAttribute('aria-pressed') === 'true') message.mode = 'assisted';
+  message.surface_mode = surfaceMode;
+  message.ai_assist = aiAssistEl.getAttribute('aria-pressed') === 'true';
   ws.send(JSON.stringify(message));
   showTyping();
   inputEl.style.height = 'auto';
@@ -702,21 +788,22 @@ function send() {
 }
 
 searchModeEl.addEventListener('click', function() {
-  const assisted = searchModeEl.getAttribute('aria-pressed') !== 'true';
-  searchModeEl.setAttribute('aria-pressed', String(assisted));
-  searchModeLabelEl.textContent = assisted ? 'AI-assisted search' : 'Standard search';
-  const tooltipTitle = document.querySelector('#search-mode-tooltip .tooltip-title');
-  const tooltipCopy = document.querySelector('#search-mode-tooltip .tooltip-copy');
-  tooltipTitle.textContent = assisted ? 'AI-assisted search' : 'Standard search';
-  tooltipCopy.textContent = assisted
-    ? 'Uses a local AI model that generated several related search queries, then runs the normal hybrid search for each one. This can find relevant thoughts when your wording differs from the original note. The generated queries are shown in the expandable search details.'
-    : 'Searches your saved thoughts using semantic similarity and keyword matching together. It is fast, predictable, and uses your original query as written.';
-  // Mouse clicks leave the button focused, which otherwise keeps the
-  // focus-within tooltip visible after the pointer leaves the control.
-  if (document.activeElement === searchModeEl && !window.matchMedia('(pointer: coarse)').matches) {
-    searchModeEl.blur();
+  updateSurfaceMode(surfaceMode === 'search' ? 'store' : 'search');
+});
+
+aiAssistEl.addEventListener('click', function() {
+  const enabled = aiAssistEl.getAttribute('aria-pressed') !== 'true';
+  aiAssistEl.setAttribute('aria-pressed', String(enabled));
+});
+
+inputEl.addEventListener('keydown', function(e) {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    updateSurfaceMode(surfaceMode === 'search' ? 'store' : 'search');
   }
 });
+
+updateSurfaceMode(surfaceMode);
 
 sendBtn.addEventListener('click', send);
 inputEl.addEventListener('keydown', function(e) {
