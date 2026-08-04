@@ -23,7 +23,7 @@ var validThoughtTypes = map[string]bool{
 }
 
 var validSearchModes = map[string]bool{
-	"hybrid": true, "vector": true, "keyword": true,
+	"hybrid": true, "vector": true, "keyword": true, "assisted": true,
 }
 
 // sourceMaxLen is the maximum allowed length for the source parameter.
@@ -81,7 +81,7 @@ func RegisterToolsWithOpts(s *server.MCPServer, b *brain.Brain, embedder embeddi
 			mcp.WithDescription("Search OpenBrain for thoughts related to a query."),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Natural language search query")),
 			mcp.WithNumber("top_k", mcp.Description("Maximum number of results to return")),
-			mcp.WithString("mode", mcp.Enum("hybrid", "vector", "keyword"), mcp.Description("Search mode")),
+			mcp.WithString("mode", mcp.Enum("hybrid", "vector", "keyword", "assisted"), mcp.Description("Search mode; assisted expands the query with the configured local model before hybrid retrieval")),
 			mcp.WithString("thought_type", mcp.Enum(thoughtTypeEnum...), mcp.Description("Filter by thought type")),
 			mcp.WithArray("tags", mcp.Description("Filter to thoughts with any of these tags")),
 			mcp.WithBoolean("include_history", mcp.Description("Include superseded thoughts")),

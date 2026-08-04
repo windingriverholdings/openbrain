@@ -124,13 +124,24 @@ func cmdSearch(ctx context.Context, b *brain.Brain) error {
 	if len(os.Args) < 3 {
 		return fmt.Errorf("usage: openbrain search <query>")
 	}
-	query := strings.Join(os.Args[2:], " ")
-	parsed := intent.ParsedIntent{Intent: intent.Search, Text: query, ThoughtType: "note"}
-	result, err := b.Dispatch(ctx, parsed, "cli")
+	mode := "hybrid"
+	args := os.Args[2:]
+	if len(args) >= 2 && args[len(args)-2] == "--mode" {
+		mode = args[len(args)-1]
+		args = args[:len(args)-2]
+	}
+	if mode != "hybrid" && mode != "assisted" {
+		return fmt.Errorf("invalid search mode %q: must be hybrid or assisted", mode)
+	}
+	if len(args) == 0 {
+		return fmt.Errorf("usage: openbrain search <query> [--mode hybrid|assisted]")
+	}
+	query := strings.Join(args, " ")
+	result, err := b.Search(ctx, query, brain.SearchOpts{Mode: mode})
 	if err != nil {
 		return err
 	}
-	fmt.Println(result)
+	fmt.Println(brain.FormatSearchResults(result))
 	return nil
 }
 
@@ -203,7 +214,7 @@ func printUsage() {
 
 Usage:
   openbrain capture <text>     Capture a thought
-  openbrain search <query>     Search for thoughts
+	  openbrain search <query>     Search for thoughts (add --mode assisted for local query expansion)
   openbrain review             Weekly review
   openbrain stats              Show statistics
   openbrain reembed            Re-embed all thoughts with NULL embeddings

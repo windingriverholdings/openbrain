@@ -50,7 +50,7 @@ type Config struct {
 	EmbeddingDim   int    `env:"OPENBRAIN_EMBEDDING_DIM" envDefault:"768"`
 
 	// MCP
-	MCPServerName    string `env:"OPENBRAIN_MCP_SERVER_NAME" envDefault:"openbrain"`
+	MCPServerName string `env:"OPENBRAIN_MCP_SERVER_NAME" envDefault:"openbrain"`
 	// MCPServerVersion defaults to version.Version (the value of the canonical
 	// var in internal/version/version.go) when OPENBRAIN_MCP_SERVER_VERSION is
 	// not set in the environment. This allows @semantic-release/exec to rewrite
@@ -76,6 +76,7 @@ type Config struct {
 	SearchTopK              int     `env:"OPENBRAIN_SEARCH_TOP_K" envDefault:"10"`
 	SearchScoreThreshold    float64 `env:"OPENBRAIN_SEARCH_SCORE_THRESHOLD" envDefault:"0.15"`
 	SearchFilteredThreshold float64 `env:"OPENBRAIN_SEARCH_FILTERED_THRESHOLD" envDefault:"0.01"`
+	SearchAssistedModel     string  `env:"OPENBRAIN_SEARCH_ASSISTED_MODEL"`
 
 	// Telegram
 	TelegramBotToken      string `env:"OPENBRAIN_TELEGRAM_BOT_TOKEN"`

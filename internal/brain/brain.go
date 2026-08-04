@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -18,6 +19,7 @@ import (
 	"github.com/windingriverholdings/openbrain/internal/extract"
 	"github.com/windingriverholdings/openbrain/internal/intent"
 	"github.com/windingriverholdings/openbrain/internal/model"
+	"github.com/windingriverholdings/openbrain/internal/queryexpand"
 )
 
 // Brain orchestrates intent dispatch using an embedder and database pool.
@@ -25,6 +27,7 @@ type Brain struct {
 	pool     *pgxpool.Pool
 	embedder embeddings.Embedder
 	cfg      *config.Config
+	expander queryexpand.Expander
 
 	// extractFn and captureFn are seams over the LLM extraction call and the
 	// single-note fallback capture, defaulted in New to the real
@@ -61,6 +64,11 @@ type Brain struct {
 // New creates a Brain with the given dependencies.
 func New(pool *pgxpool.Pool, embedder embeddings.Embedder, cfg *config.Config) *Brain {
 	b := &Brain{pool: pool, embedder: embedder, cfg: cfg}
+	if expander, err := queryexpand.New(cfg); err == nil {
+		b.expander = expander
+	} else {
+		slog.Warn("assisted search unavailable", "error", err)
+	}
 	b.extractFn = extract.ExtractThoughts
 	b.captureFn = b.Capture
 	b.supersedeFn = func(ctx context.Context, params db.SupersedeParams) (string, error) {
@@ -107,6 +115,11 @@ func (b *Brain) SetStoreFnForTesting(
 	if storeFn != nil {
 		b.storeFn = storeFn
 	}
+}
+
+// SetExpanderForTesting injects a deterministic query expander for tests.
+func (b *Brain) SetExpanderForTesting(expander queryexpand.Expander) {
+	b.expander = expander
 }
 
 // Dispatch routes a parsed intent to the appropriate handler.
@@ -176,6 +189,13 @@ type SearchOpts struct {
 	CreatedTo      *time.Time // inclusive upper bound on created_at; nil = unbounded
 }
 
+// SearchDetails contains retrieval results plus the optional work performed
+// before retrieval. ExpandedQueries is populated only for assisted searches.
+type SearchDetails struct {
+	Results         []model.ThoughtRow
+	ExpandedQueries []string
+}
+
 // filteredSearchMinThreshold is the default minimum score threshold used when
 // a type filter is applied, since filtered searches on small corpora need more
 // lenient scoring than unfiltered searches.
@@ -196,14 +216,18 @@ func effectiveThreshold(base float64, filteredThreshold float64, opts SearchOpts
 // Keyword and hybrid searches ignore tags — this is a known limitation that
 // should be addressed when those query paths gain tag support in the DB layer.
 func (b *Brain) Search(ctx context.Context, query string, opts SearchOpts) ([]model.ThoughtRow, error) {
-	if err := requireNonEmptyText("search", query); err != nil {
+	details, err := b.SearchWithDetails(ctx, query, opts)
+	if err != nil {
 		return nil, err
 	}
+	return details.Results, nil
+}
 
-	embedding, err := b.embedder.Embed(ctx, query)
-	if err != nil {
-		slog.Error("search: embed failed", "mode", opts.Mode, "query_len", len(query), "error", err)
-		return nil, fmt.Errorf("embed query: %w", err)
+// SearchWithDetails performs a search and exposes assisted-search query
+// expansion for interfaces that want to show the retrieval work.
+func (b *Brain) SearchWithDetails(ctx context.Context, query string, opts SearchOpts) (SearchDetails, error) {
+	if err := requireNonEmptyText("search", query); err != nil {
+		return SearchDetails{}, err
 	}
 
 	filteredThresh := b.cfg.SearchFilteredThreshold
@@ -214,12 +238,69 @@ func (b *Brain) Search(ctx context.Context, query string, opts SearchOpts) ([]mo
 
 	switch opts.Mode {
 	case "keyword":
-		return db.KeywordSearchThoughts(ctx, b.pool, query, b.cfg.SearchTopK, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
+		rows, err := db.KeywordSearchThoughts(ctx, b.pool, query, b.cfg.SearchTopK, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
+		return SearchDetails{Results: rows}, err
+	case "assisted":
+		return b.assistedSearch(ctx, query, opts, threshold)
 	case "vector":
-		return db.SearchThoughts(ctx, b.pool, embedding, b.cfg.SearchTopK, opts.ThoughtType, opts.Tags, threshold, opts.CreatedFrom, opts.CreatedTo)
+		embedding, err := b.embedder.Embed(ctx, query)
+		if err != nil {
+			slog.Error("search: embed failed", "mode", opts.Mode, "query_len", len(query), "error", err)
+			return SearchDetails{}, fmt.Errorf("embed query: %w", err)
+		}
+		rows, err := db.SearchThoughts(ctx, b.pool, embedding, b.cfg.SearchTopK, opts.ThoughtType, opts.Tags, threshold, opts.CreatedFrom, opts.CreatedTo)
+		return SearchDetails{Results: rows}, err
 	default:
-		return db.HybridSearchThoughts(ctx, b.pool, query, embedding, b.cfg.SearchTopK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim)
+		embedding, err := b.embedder.Embed(ctx, query)
+		if err != nil {
+			slog.Error("search: embed failed", "mode", opts.Mode, "query_len", len(query), "error", err)
+			return SearchDetails{}, fmt.Errorf("embed query: %w", err)
+		}
+		rows, err := db.HybridSearchThoughts(ctx, b.pool, query, embedding, b.cfg.SearchTopK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim)
+		return SearchDetails{Results: rows}, err
 	}
+}
+
+func (b *Brain) assistedSearch(ctx context.Context, query string, opts SearchOpts, threshold float64) (SearchDetails, error) {
+	if b.expander == nil {
+		return SearchDetails{}, fmt.Errorf("assisted search is unavailable: configure a local LLM model")
+	}
+	queries, err := b.expander.Expand(ctx, query)
+	if err != nil {
+		return SearchDetails{}, err
+	}
+	merged := make(map[string]model.ThoughtRow)
+	for _, expanded := range queries {
+		embedding, err := b.embedder.Embed(ctx, expanded)
+		if err != nil {
+			return SearchDetails{}, fmt.Errorf("embed assisted query: %w", err)
+		}
+		rows, err := db.HybridSearchThoughts(ctx, b.pool, expanded, embedding, b.cfg.SearchTopK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim)
+		if err != nil {
+			return SearchDetails{}, err
+		}
+		for _, row := range rows {
+			if previous, ok := merged[row.ID]; !ok || score(row) > score(previous) {
+				merged[row.ID] = row
+			}
+		}
+	}
+	results := make([]model.ThoughtRow, 0, len(merged))
+	for _, row := range merged {
+		results = append(results, row)
+	}
+	sort.SliceStable(results, func(i, j int) bool { return score(results[i]) > score(results[j]) })
+	if len(results) > b.cfg.SearchTopK {
+		results = results[:b.cfg.SearchTopK]
+	}
+	return SearchDetails{Results: results, ExpandedQueries: queries}, nil
+}
+
+func score(row model.ThoughtRow) float64 {
+	if row.Score == nil {
+		return 0
+	}
+	return *row.Score
 }
 
 // GetStats returns aggregate brain statistics.
