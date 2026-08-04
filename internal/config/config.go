@@ -74,9 +74,14 @@ type Config struct {
 
 	// Retrieval
 	SearchTopK              int     `env:"OPENBRAIN_SEARCH_TOP_K" envDefault:"10"`
+	SearchAssistedTopK      int     `env:"OPENBRAIN_SEARCH_ASSISTED_TOP_K" envDefault:"25"`
+	SearchProbeTopK         int     `env:"OPENBRAIN_SEARCH_PROBE_TOP_K" envDefault:"10"`
+	SearchRRFK              int     `env:"OPENBRAIN_SEARCH_RRF_K" envDefault:"60"`
+	SearchSummaryTopK       int     `env:"OPENBRAIN_SEARCH_SUMMARY_TOP_K" envDefault:"15"`
 	SearchScoreThreshold    float64 `env:"OPENBRAIN_SEARCH_SCORE_THRESHOLD" envDefault:"0.15"`
 	SearchFilteredThreshold float64 `env:"OPENBRAIN_SEARCH_FILTERED_THRESHOLD" envDefault:"0.01"`
 	SearchAssistedModel     string  `env:"OPENBRAIN_SEARCH_ASSISTED_MODEL"`
+	SearchSummaryModel      string  `env:"OPENBRAIN_SEARCH_SUMMARY_MODEL"`
 
 	// Telegram
 	TelegramBotToken      string `env:"OPENBRAIN_TELEGRAM_BOT_TOKEN"`

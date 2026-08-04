@@ -35,6 +35,13 @@ func TestIngestDirFromEnv(t *testing.T) {
 	assert.Equal(t, "/tmp/openbrain-ingest", cfg.IngestDir)
 }
 
+func TestSearchSummaryModelFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_SEARCH_SUMMARY_MODEL", "summary-model")
+	cfg, err := Load()
+	assert.NoError(t, err)
+	assert.Equal(t, "summary-model", cfg.SearchSummaryModel)
+}
+
 func TestTesseractLangsFromEnv(t *testing.T) {
 	t.Setenv("OPENBRAIN_TESSERACT_LANGS", "eng+fra")
 	cfg, err := Load()
@@ -391,4 +398,38 @@ func TestTesseractLangsValidation_AcceptsValid(t *testing.T) {
 			assert.Equal(t, tt.value, cfg.TesseractLangs)
 		})
 	}
+}
+
+// TestRetrievalDepthDefaults pins the shipped retrieval depths. Assisted search
+// deliberately retrieves deeper than a plain search because it fuses several
+// ranked lists, and the summary cap is lower than the search cap so a deep
+// search cannot overflow the local model's context window.
+func TestRetrievalDepthDefaults(t *testing.T) {
+	cfg, err := Load()
+	assert.NoError(t, err)
+
+	assert.Equal(t, 10, cfg.SearchTopK)
+	assert.Equal(t, 25, cfg.SearchAssistedTopK)
+	assert.Equal(t, 10, cfg.SearchProbeTopK)
+	assert.Equal(t, 60, cfg.SearchRRFK)
+	assert.Equal(t, 15, cfg.SearchSummaryTopK)
+	assert.LessOrEqual(t, cfg.SearchSummaryTopK, cfg.SearchAssistedTopK,
+		"the summary must never be asked to read more rows than search returns")
+}
+
+// TestRetrievalDepthOverridesFromEnv asserts each retrieval knob is tunable
+// without a rebuild.
+func TestRetrievalDepthOverridesFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_SEARCH_ASSISTED_TOP_K", "40")
+	t.Setenv("OPENBRAIN_SEARCH_PROBE_TOP_K", "12")
+	t.Setenv("OPENBRAIN_SEARCH_RRF_K", "90")
+	t.Setenv("OPENBRAIN_SEARCH_SUMMARY_TOP_K", "20")
+
+	cfg, err := Load()
+	assert.NoError(t, err)
+
+	assert.Equal(t, 40, cfg.SearchAssistedTopK)
+	assert.Equal(t, 12, cfg.SearchProbeTopK)
+	assert.Equal(t, 90, cfg.SearchRRFK)
+	assert.Equal(t, 20, cfg.SearchSummaryTopK)
 }
