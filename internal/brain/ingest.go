@@ -243,6 +243,68 @@ func captureExtracted(ctx context.Context, b *Brain, candidates []extract.Candid
 	return labels, nil
 }
 
+// captureLosslessExtracted stores the exact input alongside its AI-derived
+// thoughts in one atomic batch. The shared capture_id makes the records
+// discoverable as one capture without changing the database schema.
+func captureLosslessExtracted(ctx context.Context, b *Brain, original string, candidates []extract.Candidate, source, captureID string) ([]string, error) {
+	if err := requireNonEmptyText("original capture", original); err != nil {
+		return nil, err
+	}
+
+	originalEmbedding, err := b.embedder.Embed(ctx, original)
+	if err != nil {
+		return nil, fmt.Errorf("embed original: %w", err)
+	}
+	originalMeta := map[string]any{
+		"capture_id":   captureID,
+		"capture_role": "original_source",
+	}
+	inputs := make([]db.ThoughtInput, 0, len(candidates)+1)
+	inputs = append(inputs, db.ThoughtInput{
+		Content: original, Embedding: originalEmbedding, ThoughtType: "note",
+		Source: source, Metadata: originalMeta,
+	})
+
+	for i, c := range candidates {
+		if err := requireNonEmptyText("extract candidate", c.Content); err != nil {
+			return nil, fmt.Errorf("candidate %d: %w", i, err)
+		}
+		embedding, err := b.embedder.Embed(ctx, c.Content)
+		if err != nil {
+			return nil, fmt.Errorf("embed %q: %w", truncate(c.Content, 30), err)
+		}
+		inputs = append(inputs, db.ThoughtInput{
+			Content: c.Content, Embedding: embedding, ThoughtType: c.ThoughtType,
+			Tags: c.Tags, Source: source,
+			Metadata: map[string]any{
+				"capture_id":   captureID,
+				"capture_role": "ai_extracted",
+				"derived_from": captureID,
+			},
+		})
+	}
+
+	ids, err := b.bulkInsertFn(ctx, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("store lossless capture: %w", err)
+	}
+
+	labels := make([]string, len(candidates))
+	for i, id := range ids[1:] {
+		labels[i] = fmt.Sprintf("[%s] %s", candidates[i].ThoughtType, db.ShortID(id))
+		var subjects []model.SubjectLink
+		for _, s := range candidates[i].Subjects {
+			subjects = append(subjects, model.SubjectLink{Name: s, Type: "concept"})
+		}
+		if len(subjects) > 0 {
+			if err := db.LinkSubjects(ctx, b.pool, id, subjects); err != nil {
+				slog.Warn("failed to link subjects", "thought", db.ShortID(id), "error", err)
+			}
+		}
+	}
+	return labels, nil
+}
+
 // appendAutoTags returns new candidates with autoTags appended and deduplicated.
 // Does not mutate the original candidates.
 func appendAutoTags(candidates []extract.Candidate, autoTags []string) []extract.Candidate {

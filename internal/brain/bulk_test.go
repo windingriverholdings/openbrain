@@ -220,8 +220,8 @@ func TestCaptureExtracted_StoreFailureIsLoud(t *testing.T) {
 	assert.True(t, fake.called, "the atomic inserter must have been invoked for the candidate batch")
 }
 
-// TestCaptureExtracted_HappyPath asserts extracted candidates are stored in one
-// atomic batch and the confirmation reports the captured count.
+// TestCaptureExtracted_HappyPath asserts the exact original and extracted
+// candidates are stored together in one atomic batch.
 func TestCaptureExtracted_HappyPath(t *testing.T) {
 	fake := &fakeBulkInserter{}
 	b := &Brain{embedder: staticEmbedder{}}
@@ -238,6 +238,12 @@ func TestCaptureExtracted_HappyPath(t *testing.T) {
 	result, err := b.DeepCapture(context.Background(), parsed, "cli")
 	require.NoError(t, err)
 	assert.True(t, fake.called)
-	require.Len(t, fake.got, 2, "both candidates must go into one atomic batch")
-	assert.Contains(t, result, "2")
+	require.Len(t, fake.got, 3, "the original and both candidates must go into one atomic batch")
+	assert.Equal(t, "long input", fake.got[0].Content)
+	assert.Equal(t, "original_source", fake.got[0].Metadata["capture_role"])
+	assert.Equal(t, "candidate one", fake.got[1].Content)
+	assert.Equal(t, "ai_extracted", fake.got[1].Metadata["capture_role"])
+	assert.Equal(t, fake.got[0].Metadata["capture_id"], fake.got[1].Metadata["capture_id"])
+	assert.Contains(t, result, "Stored the original note")
+	assert.Contains(t, result, "2 additional thoughts")
 }

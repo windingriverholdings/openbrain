@@ -4,6 +4,8 @@ package brain
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -187,6 +189,12 @@ type SearchOpts struct {
 	IncludeHistory bool
 	CreatedFrom    *time.Time // inclusive lower bound on created_at; nil = unbounded
 	CreatedTo      *time.Time // inclusive upper bound on created_at; nil = unbounded
+}
+
+// CaptureDetails describes the work performed by AI-assisted storage.
+type CaptureDetails struct {
+	OriginalPreserved bool                `json:"original_preserved"`
+	Extracted         []extract.Candidate `json:"extracted,omitempty"`
 }
 
 // SearchDetails contains retrieval results plus the optional work performed
@@ -401,11 +409,18 @@ func (b *Brain) resolveSupersedeTarget(ctx context.Context, parsed intent.Parsed
 	return results[0].ID, nil
 }
 
-// DeepCapture extracts multiple thoughts from long text via LLM.
-// Uses the shared captureExtracted helper (also used by DeepCaptureWithMeta).
+// DeepCapture stores the exact source text plus AI-derived thoughts. The
+// original is always retained when extraction succeeds.
 func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, source string) (string, error) {
+	result, _, err := b.DeepCaptureWithDetails(ctx, parsed, source)
+	return result, err
+}
+
+// DeepCaptureWithDetails stores the exact source and returns the extracted
+// candidates so interfaces can show what AI Assist did.
+func (b *Brain) DeepCaptureWithDetails(ctx context.Context, parsed intent.ParsedIntent, source string) (string, CaptureDetails, error) {
 	if err := requireNonEmptyText("deep_capture", parsed.Text); err != nil {
-		return "", err
+		return "", CaptureDetails{}, err
 	}
 
 	candidates, err := b.extractFn(ctx, parsed.Text)
@@ -418,20 +433,36 @@ func (b *Brain) DeepCapture(ctx context.Context, parsed intent.ParsedIntent, sou
 			"error", fmt.Errorf("deep capture: extraction failed: %w", err))
 		confirmation, capErr := b.captureFn(ctx, parsed, source)
 		if capErr != nil {
-			return "", capErr
+			return "", CaptureDetails{}, capErr
 		}
-		return fmt.Sprintf("⚠ extraction failed (%v) — stored as a single note: %s", err, confirmation), nil
+		return fmt.Sprintf("⚠ extraction failed (%v) — stored as a single note: %s", err, confirmation), CaptureDetails{OriginalPreserved: true}, nil
 	}
 
 	if len(candidates) == 0 {
-		return b.captureFn(ctx, parsed, source)
+		confirmation, capErr := b.captureFn(ctx, parsed, source)
+		return confirmation, CaptureDetails{OriginalPreserved: capErr == nil}, capErr
 	}
 
-	captured, err := captureExtracted(ctx, b, candidates, source, nil)
+	captureID, err := newCaptureID()
 	if err != nil {
-		return "", fmt.Errorf("deep capture: %w", err)
+		return "", CaptureDetails{}, fmt.Errorf("deep capture: create capture id: %w", err)
 	}
-	return fmt.Sprintf("Captured %d thoughts: %s", len(captured), strings.Join(captured, ", ")), nil
+	captured, err := captureLosslessExtracted(ctx, b, parsed.Text, candidates, source, captureID)
+	if err != nil {
+		return "", CaptureDetails{}, fmt.Errorf("deep capture: %w", err)
+	}
+	return fmt.Sprintf("Stored the original note and extracted %d additional thoughts with AI Assist: %s", len(captured), strings.Join(captured, ", ")), CaptureDetails{
+		OriginalPreserved: true,
+		Extracted:         candidates,
+	}, nil
+}
+
+func newCaptureID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // --- Formatting helpers (text output for CLI/chat) ---
