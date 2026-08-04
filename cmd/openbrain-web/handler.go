@@ -540,12 +540,19 @@ type wsResponse struct {
 	Query           string            `json:"query,omitempty"`
 	Mode            string            `json:"mode,omitempty"`
 	AxesUsed        []string          `json:"axes_used,omitempty"`
+	SearchExpansion *searchExpansion  `json:"search_expansion,omitempty"`
 	SurfaceMode     string            `json:"surface_mode,omitempty"`
 	AIAssist        bool              `json:"ai_assist,omitempty"`
 	AISummarize     bool              `json:"ai_summarize,omitempty"`
 	CaptureDetails  *captureDetails   `json:"capture_details,omitempty"`
 	Summary         string            `json:"summary,omitempty"`
 	SummaryDetails  *summaryDetails   `json:"summary_details,omitempty"`
+}
+
+type searchExpansion struct {
+	Interpretation string   `json:"interpretation"`
+	Terms          []string `json:"terms"`
+	Confidence     float64  `json:"confidence"`
 }
 
 type summaryDetails struct {
@@ -704,13 +711,10 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 			// formatter, so it is byte-identical to the old reply.
 			if parsed.Intent == intent.Search {
 				mode := msg.Mode
-				if msg.AIAssist && surfaceMode == "search" {
-					mode = "assisted"
-				}
 				if mode == "" {
 					mode = "hybrid"
 				}
-				if mode != "hybrid" && mode != "assisted" && mode != "vector" && mode != "keyword" {
+				if mode != "hybrid" && mode != "assisted" && mode != "vector" && mode != "keyword" && mode != "ai" {
 					resp.Content = "Error: invalid search mode"
 					if err := conn.WriteJSON(resp); err != nil {
 						return
@@ -726,6 +730,13 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 					resp.Results = &results
 					resp.Mode = mode
 					resp.AxesUsed = details.AxesUsed
+					if details.Expansion != nil {
+						resp.SearchExpansion = &searchExpansion{
+							Interpretation: details.Expansion.Interpretation,
+							Terms:          details.Expansion.Terms,
+							Confidence:     details.Expansion.Confidence,
+						}
+					}
 					if msg.AISummarize && surfaceMode == "search" {
 						resp.SummaryDetails = &summaryDetails{ResultCount: len(details.Results)}
 						summary, summaryErr := b.SummarizeSearch(r.Context(), parsed.Text, details.Results)

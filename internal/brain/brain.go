@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -20,7 +21,9 @@ import (
 	"github.com/windingriverholdings/openbrain/internal/extract"
 	"github.com/windingriverholdings/openbrain/internal/intent"
 	"github.com/windingriverholdings/openbrain/internal/model"
+	"github.com/windingriverholdings/openbrain/internal/queryexpand"
 	"github.com/windingriverholdings/openbrain/internal/rankfuse"
+	"github.com/windingriverholdings/openbrain/internal/searchplan"
 	"github.com/windingriverholdings/openbrain/internal/summarize"
 )
 
@@ -30,6 +33,8 @@ type Brain struct {
 	embedder   embeddings.Embedder
 	cfg        *config.Config
 	summarizer summarize.Provider
+	expander   queryexpand.Provider
+	planner    searchplan.Planner
 
 	// extractFn and captureFn are seams over the LLM extraction call and the
 	// single-note fallback capture, defaulted in New to the real
@@ -70,6 +75,16 @@ func New(pool *pgxpool.Pool, embedder embeddings.Embedder, cfg *config.Config) *
 		b.summarizer = summarizerProvider
 	} else {
 		slog.Warn("search summarization unavailable", "error", err)
+	}
+	if expander, err := queryexpand.New(cfg); err == nil {
+		b.expander = expander
+	} else {
+		slog.Warn("contextual search expansion unavailable", "error", err)
+	}
+	if planner, err := searchplan.NewPlanner(cfg); err == nil {
+		b.planner = planner
+	} else {
+		slog.Warn("AI Search unavailable", "error", err)
 	}
 	b.extractFn = extract.ExtractThoughts
 	b.captureFn = b.Capture
@@ -122,6 +137,16 @@ func (b *Brain) SetStoreFnForTesting(
 // SetSummarizerForTesting injects a deterministic search summarizer for tests.
 func (b *Brain) SetSummarizerForTesting(provider summarize.Provider) {
 	b.summarizer = provider
+}
+
+// SetQueryExpanderForTesting injects a deterministic contextual search expander.
+func (b *Brain) SetQueryExpanderForTesting(provider queryexpand.Provider) {
+	b.expander = provider
+}
+
+// SetSearchPlannerForTesting injects a deterministic AI Search planner.
+func (b *Brain) SetSearchPlannerForTesting(planner searchplan.Planner) {
+	b.planner = planner
 }
 
 // Dispatch routes a parsed intent to the appropriate handler.
@@ -205,8 +230,17 @@ type CaptureDetails struct {
 // work performed. AxesUsed names the independent retrieval strategies whose
 // rankings were fused, and is populated only for assisted searches.
 type SearchDetails struct {
-	Results  []model.ThoughtRow
-	AxesUsed []string
+	Results   []model.ThoughtRow
+	AxesUsed  []string
+	Expansion *SearchExpansion
+}
+
+// SearchExpansion records the model's grounded interpretation of an assisted
+// search. It is nil when expansion was unavailable, declined, or not requested.
+type SearchExpansion struct {
+	Interpretation string
+	Terms          []string
+	Confidence     float64
 }
 
 // SummaryDetails describes a read-only summary of retrieved search results.
@@ -278,6 +312,8 @@ func (b *Brain) SearchWithDetails(ctx context.Context, query string, opts Search
 	topK := b.resolveTopK(opts)
 
 	switch opts.Mode {
+	case "ai", "agentic":
+		return b.aiSearch(ctx, query, opts, threshold)
 	case "keyword":
 		rows, err := db.KeywordSearchThoughts(ctx, b.pool, query, topK, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
 		return SearchDetails{Results: rows}, err
@@ -302,12 +338,88 @@ func (b *Brain) SearchWithDetails(ctx context.Context, query string, opts Search
 	}
 }
 
+// AISearchDetails contains the final rows and the safe searches the planner
+// requested. The trace is intended for the UI so users can inspect AI Search.
+type AISearchDetails struct {
+	Results []model.ThoughtRow
+	Steps   []searchplan.Step
+}
+
+func (b *Brain) aiSearch(ctx context.Context, query string, opts SearchOpts, threshold float64) (SearchDetails, error) {
+	if b.planner == nil {
+		return SearchDetails{}, fmt.Errorf("AI Search is unavailable: configure a local LLM model")
+	}
+	if b.cfg != nil {
+		if timeout := b.cfg.SearchAgentTimeout; timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+	}
+	plan, err := b.planner.Plan(ctx, query)
+	if err != nil {
+		return SearchDetails{}, err
+	}
+	rowsByID := make(map[string]model.ThoughtRow)
+	steps := make([]searchplan.Step, 0, len(plan.Steps))
+	for _, step := range plan.Steps {
+		searchOpts := opts
+		searchOpts.Mode = step.Mode
+		searchOpts.ThoughtType = step.ThoughtType
+		searchOpts.Tags = step.Tags
+		searchOpts.IncludeHistory = step.IncludeHistory
+		searchOpts.TopK = step.TopK
+		details, searchErr := b.SearchWithDetails(ctx, step.Query, searchOpts)
+		if searchErr != nil {
+			continue
+		}
+		steps = append(steps, step)
+		for _, row := range details.Results {
+			rowsByID[row.ID] = row
+		}
+	}
+	if len(steps) == 0 {
+		return SearchDetails{}, fmt.Errorf("AI Search could not complete any safe search")
+	}
+	rows := make([]model.ThoughtRow, 0, len(rowsByID))
+	for _, row := range rowsByID {
+		rows = append(rows, row)
+	}
+	// Keep output deterministic even though rowsByID is intentionally used for
+	// deduplication.
+	sort.SliceStable(rows, func(i, j int) bool {
+		left, right := 0.0, 0.0
+		if rows[i].Score != nil {
+			left = *rows[i].Score
+		}
+		if rows[j].Score != nil {
+			right = *rows[j].Score
+		}
+		if left != right {
+			return left > right
+		}
+		return rows[i].ID < rows[j].ID
+	})
+	topK := b.resolveTopK(opts)
+	if len(rows) > topK {
+		rows = rows[:topK]
+	}
+	names := make([]string, 0, len(steps))
+	for _, step := range steps {
+		names = append(names, step.Mode+": "+step.Query)
+	}
+	return SearchDetails{Results: rows, AxesUsed: names}, nil
+}
+
 // resolveTopK returns the row cap for a search: the explicit per-call TopK when
 // set, otherwise the configured default. Assisted search retrieves more deeply
 // because it fuses several ranked lists and needs candidates from each.
 func (b *Brain) resolveTopK(opts SearchOpts) int {
 	if opts.TopK > 0 {
 		return opts.TopK
+	}
+	if opts.Mode == "vector" && b.cfg != nil && b.cfg.SearchFastTopK > 0 {
+		return b.cfg.SearchFastTopK
 	}
 	if opts.Mode == "assisted" && b.cfg.SearchAssistedTopK > 0 {
 		return b.cfg.SearchAssistedTopK
@@ -326,11 +438,9 @@ func (b *Brain) rrfK() int {
 	return rankfuse.DefaultK
 }
 
-// assistedSearch retrieves along several independent axes and fuses their
-// rankings. It deliberately does NOT ask a model to invent related search
-// terms: that added vocabulary absent from the corpus and spent retrieval
-// slots on it. Instead the literal query is run through two genuinely
-// different retrieval strategies and combined by rank.
+// assistedSearch grounds optional model expansion in an initial literal
+// retrieval, then fuses the expansion with the exact-query retrieval axes.
+// Model failures fall back to the deterministic lexical-plus-semantic path.
 //
 // Fusing by rank rather than by score matters because the two strategies emit
 // incomparable numbers: full-text rank values are small (~0.05-0.3) while
@@ -339,6 +449,48 @@ func (b *Brain) rrfK() int {
 // codenames. Reciprocal rank fusion only reads positions, so a first-place
 // lexical hit counts as much as a first-place semantic hit.
 func (b *Brain) assistedSearch(ctx context.Context, query string, opts SearchOpts, threshold float64) (SearchDetails, error) {
+	topK := b.resolveTopK(opts)
+	if b.expander != nil {
+		probeK := b.cfg.SearchProbeTopK
+		if probeK <= 0 {
+			probeK = 5
+		}
+		probeOpts := opts
+		probeOpts.Mode = "hybrid"
+		probeOpts.TopK = probeK
+		probe, probeErr := b.literalAssistedSearch(ctx, query, probeOpts, threshold)
+		if probeErr == nil && len(probe.Results) > 0 {
+			expansion, expandErr := b.expander.Expand(ctx, query, probe.Results)
+			if expandErr == nil && expansion.UseExpansion {
+				expandedQuery := strings.Join(expansion.ExpandedTerms, " ")
+				literal, literalErr := db.KeywordSearchThoughts(ctx, b.pool, query, topK, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
+				embedding, embedErr := b.embedder.Embed(ctx, expandedQuery)
+				if literalErr == nil && embedErr == nil {
+					semantic, semanticErr := db.HybridSearchThoughts(ctx, b.pool, expandedQuery, embedding, topK, 0.3, 0.7, threshold, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim)
+					expandedLexical, lexicalErr := db.KeywordSearchThoughts(ctx, b.pool, expandedQuery, topK, opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
+					if semanticErr == nil && lexicalErr == nil {
+						results := rankfuse.FuseRRF(b.rrfK(), literal, semantic, expandedLexical)
+						if len(results) > topK {
+							results = results[:topK]
+						}
+						return SearchDetails{
+							Results:  results,
+							AxesUsed: []string{"literal", "contextual_expansion", "contextual_lexical"},
+							Expansion: &SearchExpansion{
+								Interpretation: expansion.Interpretation,
+								Terms:          expansion.ExpandedTerms,
+								Confidence:     expansion.Confidence,
+							},
+						}, nil
+					}
+				}
+			}
+		}
+	}
+	return b.literalAssistedSearch(ctx, query, opts, threshold)
+}
+
+func (b *Brain) literalAssistedSearch(ctx context.Context, query string, opts SearchOpts, threshold float64) (SearchDetails, error) {
 	topK := b.resolveTopK(opts)
 
 	type axis struct {

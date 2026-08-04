@@ -56,6 +56,14 @@
     .composer-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 9px; border: 0; border-radius: 999px; background: transparent; color: var(--text-dim); font: 500 0.76rem var(--font); cursor: pointer; transition: color 0.15s, background 0.15s; }
     .composer-btn:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,0.08); }
     .composer-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+    #search-strategy-wrap { display: none; align-items: center; padding: 3px; gap: 2px; border: 1px solid rgba(156,163,175,0.2); border-radius: 999px; background: rgba(0,0,0,0.14); }
+    #search-strategy-wrap.visible { display: inline-flex; }
+    .strategy-option { position: relative; min-width: 58px; height: 28px; padding: 0 9px; border: 0; border-radius: 999px; background: transparent; color: var(--text-dim); font: 600 0.68rem var(--font); cursor: pointer; transition: color 0.15s, background 0.15s, box-shadow 0.15s; }
+    .strategy-option:hover { color: var(--text); }
+    .strategy-option[aria-checked="true"] { color: var(--text); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 38%, transparent), 0 2px 8px rgba(0,0,0,0.16); }
+    .strategy-option::after { content: attr(data-tooltip); position: absolute; z-index: 20; left: 50%; bottom: calc(100% + 12px); width: 220px; padding: 9px 11px; border: 1px solid rgba(108,142,245,0.35); border-radius: 9px; background: linear-gradient(145deg, var(--surface2), var(--bg)); color: var(--text-dim); font: 400 0.72rem/1.45 var(--font); text-align: left; white-space: normal; box-shadow: 0 9px 25px rgba(0,0,0,0.48); opacity: 0; visibility: hidden; pointer-events: none; transform: translate(-50%, 4px); transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s; }
+    .strategy-option:hover::after, .strategy-option:focus-visible::after { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+    @media (max-width: 640px) { .strategy-option { min-width: 0; padding: 0 7px; } }
      #search-mode[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
      #ai-assist[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
      #ai-summarize[aria-pressed="true"] { color: var(--mode-color); background: var(--mode-color-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-color) 30%, transparent); }
@@ -76,7 +84,9 @@
     .ambiguity-actions button:hover { border-color: var(--accent); color: var(--accent); }
 
     /* ── search results (structured list, deliberately NOT a chat bubble) ── */
-    .results { align-self: stretch; max-width: 100%; display: flex; flex-direction: column; gap: 8px; animation: fadeIn 0.15s ease; }
+    .results { align-self: stretch; max-width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; animation: fadeIn 0.15s ease; }
+    .results-head, .search-work, .results-empty, .summary-card { grid-column: 1 / -1; }
+    @media (min-width: 960px) { .results { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .search-work { border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,0.025); overflow: hidden; }
     .search-work summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 9px 12px; color: var(--text-dim); font-size: 0.78rem; }
     .search-work summary::-webkit-details-marker { display: none; }
@@ -180,22 +190,18 @@
             <span class="tooltip-copy">Save what you enter to your knowledge base. Press Tab to switch to Search mode.</span>
           </span>
         </span>
-        <span id="ai-summarize-wrap" class="search-mode-wrap">
-          <button id="ai-assist" class="composer-btn" type="button" aria-pressed="false" aria-describedby="ai-assist-tooltip">
-            <span id="ai-assist-label">AI Assist</span>
-          </button>
-          <span id="ai-assist-tooltip" class="score-tooltip" role="tooltip">
-            <span class="tooltip-title">AI Assist in Store mode</span>
-            <span class="tooltip-copy">Store your original text exactly as entered, then use the local model to add extra extracted thoughts and metadata. Press Tab to switch modes.</span>
-          </span>
+        <span id="search-strategy-wrap" role="group" aria-label="Search speed and quality">
+          <button class="strategy-option" type="button" role="radio" data-mode="vector" aria-checked="false" aria-label="Fast search" data-tooltip="Fast embeds your query once and searches by semantic similarity. It is the quickest way to find notes with related meaning.">Fast</button>
+          <button class="strategy-option" type="button" role="radio" data-mode="hybrid" aria-checked="true" aria-label="Hybrid search" data-tooltip="Hybrid combines semantic similarity with exact keyword matching. It is a balanced choice for both meaning and precise terms.">Hybrid</button>
+          <button class="strategy-option" type="button" role="radio" data-mode="ai" aria-checked="false" aria-label="AI Search" data-tooltip="AI Search asks the local model to choose several safe searches, then combines their results. It is the most flexible, but usually the slowest.">AI Search</button>
         </span>
-        <span class="search-mode-wrap">
+        <span id="ai-summarize-wrap" class="search-mode-wrap">
           <button id="ai-summarize" class="composer-btn" type="button" aria-pressed="false" aria-describedby="ai-summarize-tooltip">
             <span>AI Summarize</span>
           </button>
           <span id="ai-summarize-tooltip" class="score-tooltip" role="tooltip">
             <span class="tooltip-title">AI Summarize</span>
-            <span class="tooltip-copy">AI Assist expands your query before searching. AI Summarize explains the retrieved results.</span>
+            <span class="tooltip-copy">AI Summarize explains the retrieved results using the selected search strategy.</span>
           </span>
         </span>
       </div>
@@ -223,9 +229,15 @@ const sendBtn    = document.getElementById('send');
 const composerEl = document.getElementById('composer');
 const searchModeEl = document.getElementById('search-mode');
 const searchModeLabelEl = document.getElementById('search-mode-label');
-const aiAssistEl = document.getElementById('ai-assist');
 const aiSummarizeEl = document.getElementById('ai-summarize');
 const aiSummarizeWrapEl = document.getElementById('ai-summarize-wrap');
+const strategyWrapEl = document.getElementById('search-strategy-wrap');
+let searchStrategy = 'hybrid';
+try {
+  const savedStrategy = localStorage.getItem('openbrain.searchStrategy');
+  if (savedStrategy === 'vector' || savedStrategy === 'hybrid' || savedStrategy === 'ai') searchStrategy = savedStrategy;
+} catch (_) { /* storage unavailable */ }
+const STRATEGY_LABELS = { vector: 'Fast', hybrid: 'Hybrid', ai: 'AI Search' };
 const dotEl      = document.getElementById('dot');
 const statusEl   = document.getElementById('status-text');
 
@@ -242,6 +254,7 @@ function updateSurfaceMode(mode) {
   if (surfaceMode !== 'search') aiSummarizeEl.setAttribute('aria-pressed', 'false');
   aiSummarizeEl.disabled = surfaceMode !== 'search';
   aiSummarizeWrapEl.hidden = surfaceMode !== 'search';
+  strategyWrapEl.classList.toggle('visible', surfaceMode === 'search');
   composerEl.classList.toggle('mode-search', surfaceMode === 'search');
   composerEl.classList.toggle('mode-store', surfaceMode === 'store');
   searchModeEl.setAttribute('aria-pressed', String(surfaceMode === 'search'));
@@ -253,13 +266,16 @@ function updateSurfaceMode(mode) {
   copy.textContent = surfaceMode === 'search'
     ? 'Find saved thoughts using semantic similarity and keyword matching. Press Tab to switch to Store mode.'
     : 'Save what you enter to your knowledge base. Press Tab to switch to Search mode.';
-  const assistTitle = document.querySelector('#ai-assist-tooltip .tooltip-title');
-  const assistCopy = document.querySelector('#ai-assist-tooltip .tooltip-copy');
-  assistTitle.textContent = surfaceMode === 'search' ? 'AI Assist in Search mode' : 'AI Assist in Store mode';
-  assistCopy.textContent = surfaceMode === 'search'
-    ? 'Search your exact words several independent ways at once — exact wording and meaning — then combine the rankings. Notes found by more than one method rise to the top. No extra search terms are invented.'
-     : 'Store the original text exactly as entered, then use the local model to add extra extracted thoughts and metadata. If assistance fails, the original text is still saved.';
   try { localStorage.setItem('openbrain.surfaceMode', surfaceMode); } catch (_) { /* storage unavailable */ }
+}
+
+function setSearchStrategy(mode) {
+  if (!STRATEGY_LABELS[mode]) return;
+  searchStrategy = mode;
+  Array.prototype.forEach.call(strategyWrapEl.querySelectorAll('.strategy-option'), function(option) {
+    option.setAttribute('aria-checked', String(option.dataset.mode === mode));
+  });
+  try { localStorage.setItem('openbrain.searchStrategy', mode); } catch (_) { /* storage unavailable */ }
 }
 
 // Safe markdown rendering — splits text on tokens, builds DOM nodes, no innerHTML for content
@@ -310,12 +326,17 @@ function renderNoteBody(text, container) {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Fenced code block: consume through the closing fence (or end of text).
-    const fence = line.match(/^\s*```(.*)$/);
+    // Fenced code block: support Markdown fences made from two or more
+    // backticks, including an optional language label. The closing fence must
+    // be at least as long as the opening fence so backticks inside code stay
+    // part of the code block.
+    const fence = line.match(/^\s*(`{2,})([^`]*)$/);
     if (fence) {
+	  const fenceLength = fence[1].length;
       i++;
       const code = [];
-      while (i < lines.length && !/^\s*```/.test(lines[i])) {
+      const closingFence = new RegExp('^\\s*`{' + fenceLength + ',}\\s*$');
+      while (i < lines.length && !closingFence.test(lines[i])) {
         code.push(lines[i]);
         i++;
       }
@@ -350,7 +371,7 @@ function renderNoteBody(text, container) {
     // Plain paragraph: gather until a blank line or a block starter.
     const buf = [];
     while (i < lines.length && !/^\s*$/.test(lines[i]) &&
-           !/^\s*[-*•]\s+/.test(lines[i]) && !/^\s*```/.test(lines[i])) {
+           !/^\s*[-*•]\s+/.test(lines[i]) && !/^\s*`{2,}[^`]*$/.test(lines[i])) {
       buf.push(lines[i]);
       i++;
     }
@@ -525,6 +546,9 @@ function buildSummaryCard(data) {
 const AXIS_COPY = [
   ['lexical', 'notes containing your exact words'],
   ['semantic', 'notes that mean something similar'],
+  ['literal', 'your original query, kept as an exact-match signal'],
+  ['contextual_expansion', 'the grounded meaning generated from the probe notes'],
+  ['contextual_lexical', 'exact words from the grounded interpretation'],
 ];
 
 function appendSearchResults(data) {
@@ -546,13 +570,44 @@ function appendSearchResults(data) {
       'Multi-axis search \u00b7 ' + data.axes_used.join(', ') + ' \u00b7 ' + rows.length + ' results'));
     work.appendChild(summary);
     const content = el('div', 'search-work-content');
-    content.appendChild(document.createTextNode(
-      'Your exact words were searched several independent ways and the rankings were combined. ' +
-      'No extra search terms were invented. Notes ranked highly by more than one method rise to the top.'));
+    if (data.search_expansion) {
+      const expansion = data.search_expansion;
+      content.appendChild(document.createTextNode(
+        'The local model read the initial probe notes and interpreted your query as:'));
+      const interpretation = el('span', 'search-query');
+      interpretation.textContent = expansion.interpretation || 'No interpretation returned';
+      content.appendChild(interpretation);
+      if (Array.isArray(expansion.terms) && expansion.terms.length) {
+        const terms = el('span', 'search-query');
+        terms.textContent = 'Expanded search terms: ' + expansion.terms.join(', ');
+        content.appendChild(terms);
+      }
+      const confidence = el('span', 'search-query');
+      confidence.textContent = 'Model confidence: ' + Math.round(Number(expansion.confidence || 0) * 100) + '%';
+      content.appendChild(confidence);
+    } else {
+      content.appendChild(document.createTextNode(
+        'The contextual model did not produce a grounded expansion, so the exact query was searched using the deterministic retrieval axes. No extra search terms were invented.'));
+    }
     AXIS_COPY.forEach(function(entry) {
       if (data.axes_used.indexOf(entry[0]) === -1) return;
       const line = el('span', 'search-query');
       line.textContent = entry[0] + ' — ' + entry[1];
+      content.appendChild(line);
+    });
+    work.appendChild(content);
+    wrap.appendChild(work);
+  }
+  if (data.mode === 'ai' && Array.isArray(data.axes_used) && data.axes_used.length) {
+    const work = el('details', 'search-work');
+    const summary = el('summary');
+    summary.textContent = 'AI Search · ' + data.axes_used.length + ' searches · ' + rows.length + ' results';
+    work.appendChild(summary);
+    const content = el('div', 'search-work-content');
+    content.appendChild(document.createTextNode('The local model selected these safe, read-only searches:'));
+    data.axes_used.forEach(function(step) {
+      const line = el('span', 'search-query');
+      line.textContent = step;
       content.appendChild(line);
     });
     work.appendChild(content);
@@ -853,7 +908,7 @@ function submitMessage(text, explicitIntent, showUser) {
   const message = { message: text };
   if (explicitIntent) message.intent = explicitIntent;
   message.surface_mode = surfaceMode;
-  message.ai_assist = aiAssistEl.getAttribute('aria-pressed') === 'true';
+  message.mode = surfaceMode === 'search' ? searchStrategy : '';
   message.ai_summarize = surfaceMode === 'search' && aiSummarizeEl.getAttribute('aria-pressed') === 'true';
   ws.send(JSON.stringify(message));
   showTyping();
@@ -872,9 +927,8 @@ searchModeEl.addEventListener('click', function() {
   updateSurfaceMode(surfaceMode === 'search' ? 'store' : 'search');
 });
 
-aiAssistEl.addEventListener('click', function() {
-  const enabled = aiAssistEl.getAttribute('aria-pressed') !== 'true';
-  aiAssistEl.setAttribute('aria-pressed', String(enabled));
+Array.prototype.forEach.call(strategyWrapEl.querySelectorAll('.strategy-option'), function(option) {
+  option.addEventListener('click', function() { setSearchStrategy(option.dataset.mode); });
 });
 
 aiSummarizeEl.addEventListener('click', function() {
@@ -891,6 +945,7 @@ inputEl.addEventListener('keydown', function(e) {
 });
 
 updateSurfaceMode(surfaceMode);
+setSearchStrategy(searchStrategy);
 
 sendBtn.addEventListener('click', send);
 inputEl.addEventListener('keydown', function(e) {
