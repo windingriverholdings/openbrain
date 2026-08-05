@@ -528,6 +528,8 @@ type wsMessage struct {
 	Intent      string `json:"intent,omitempty"`
 	Mode        string `json:"mode,omitempty"`
 	SurfaceMode string `json:"surface_mode,omitempty"`
+	From        string `json:"from,omitempty"`
+	To          string `json:"to,omitempty"`
 	AIAssist    bool   `json:"ai_assist,omitempty"`
 	AISummarize bool   `json:"ai_summarize,omitempty"`
 }
@@ -704,6 +706,14 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 				parsed.Text = msg.Message
 				parsed.ThoughtType = intent.InferType(msg.Message)
 			}
+			// Store mode always uses the normal single-thought capture path. In
+			// particular, long input must not silently become AI-assisted
+			// extraction just because the parser classified it as Extract.
+			if surfaceMode == "store" && parsed.Intent == intent.Extract {
+				parsed.Intent = intent.Capture
+				parsed.Text = msg.Message
+				parsed.ThoughtType = intent.InferType(msg.Message)
+			}
 			if surfaceMode == "search" && (parsed.Intent == intent.Capture || parsed.Intent == intent.Extract || parsed.Intent == intent.Ambiguous) {
 				parsed.Intent = intent.Search
 				parsed.Text = msg.Message
@@ -714,7 +724,7 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 				Intent:      string(parsed.Intent),
 				ThoughtType: parsed.ThoughtType,
 				SurfaceMode: surfaceMode,
-				AIAssist:    msg.AIAssist,
+				AIAssist:    msg.AIAssist && surfaceMode != "store",
 				AISummarize: msg.AISummarize && surfaceMode == "search",
 			}
 			if parsed.Intent == intent.Ambiguous {
@@ -748,7 +758,31 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 					}
 					continue
 				}
-				details, err := b.SearchWithDetails(r.Context(), parsed.Text, brain.SearchOpts{Mode: mode})
+				searchOpts := brain.SearchOpts{Mode: mode}
+				if msg.From != "" {
+					if t, parseErr := time.Parse("2006-01-02", msg.From); parseErr != nil {
+						resp.Content = "Error: invalid from date"
+						if err := conn.WriteJSON(resp); err != nil {
+							return
+						}
+						continue
+					} else {
+						searchOpts.CreatedFrom = &t
+					}
+				}
+				if msg.To != "" {
+					if t, parseErr := time.Parse("2006-01-02", msg.To); parseErr != nil {
+						resp.Content = "Error: invalid to date"
+						if err := conn.WriteJSON(resp); err != nil {
+							return
+						}
+						continue
+					} else {
+						eod := t.Add(24*time.Hour - time.Nanosecond)
+						searchOpts.CreatedTo = &eod
+					}
+				}
+				details, err := b.SearchWithDetails(r.Context(), parsed.Text, searchOpts)
 				if err != nil {
 					resp.Content = fmt.Sprintf("Error: %v", err)
 				} else {
@@ -777,25 +811,10 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 					}
 				}
 			} else {
-				if msg.AIAssist && surfaceMode == "store" && (parsed.Intent == intent.Capture || parsed.Intent == intent.Extract) {
-					parsed.Intent = intent.Extract
-					resp.Intent = string(intent.Extract)
-				}
 				var result string
 				var captureInfo *captureDetails
 				var err error
-				if msg.AIAssist && surfaceMode == "store" && parsed.Intent == intent.Extract {
-					var details brain.CaptureDetails
-					result, details, err = b.DeepCaptureWithDetails(r.Context(), parsed, "web")
-					captureInfo = &captureDetails{OriginalPreserved: details.OriginalPreserved}
-					for _, candidate := range details.Extracted {
-						captureInfo.Extracted = append(captureInfo.Extracted, captureThought{
-							Content: candidate.Content, ThoughtType: candidate.ThoughtType, Tags: candidate.Tags,
-						})
-					}
-				} else {
-					result, err = b.Dispatch(r.Context(), parsed, "web")
-				}
+				result, err = b.Dispatch(r.Context(), parsed, "web")
 				if err != nil {
 					result = fmt.Sprintf("Error: %v", err)
 				}

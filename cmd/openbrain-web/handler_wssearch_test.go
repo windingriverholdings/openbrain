@@ -226,7 +226,7 @@ func TestFormatSearchResults_OmitsScoreWhenNil(t *testing.T) {
 
 // TestChatPageRendersStructuredSearchResults asserts the chat page routes
 // search replies to the structured card renderer instead of the chat bubble,
-// and that the card affordances (detail open, expand toggle) are wired.
+// and that clicking a card opens its detail view.
 func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("static", "index.html"))
 	require.NoError(t, err)
@@ -246,10 +246,9 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	assert.Contains(t, page, "aria-describedby=\"search-mode-tooltip\"")
 	assert.Contains(t, page, "score.setAttribute('aria-label', 'Relevance score '")
 
-	// Clamped preview with an expand toggle.
+	// Compact result previews remain visually bounded.
 	assert.Contains(t, page, "result-body")
-	assert.Contains(t, page, "Show more")
-	assert.Contains(t, page, "aria-expanded")
+	assert.Contains(t, page, "result-card")
 
 	// Block-aware markdown for note bodies.
 	assert.Contains(t, page, "function renderNoteBody(")
