@@ -103,6 +103,11 @@ func New(pool *pgxpool.Pool, embedder embeddings.Embedder, cfg *config.Config) *
 	return b
 }
 
+// DeleteThought permanently removes a thought from the brain.
+func (b *Brain) DeleteThought(ctx context.Context, id string) error {
+	return db.DeleteThought(ctx, b.pool, id)
+}
+
 // SetSeamsForTesting overrides the extract and bulk-insert seams from test
 // code in OTHER packages (e.g. internal/mcptools), so the MCP handler layer
 // can be exercised without a live LLM or database. A nil argument leaves the

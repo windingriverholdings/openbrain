@@ -131,7 +131,8 @@
     .note-body pre code { font-family: var(--mono); font-size: 0.8rem; color: var(--text); background: none; padding: 0; }
     .result-actions { display: flex; align-items: center; gap: 8px; }
     .result-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-family: var(--font); font-size: 0.7rem; padding: 3px 9px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
-    .result-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+     .result-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+     .result-btn.danger:hover { border-color: var(--red); color: var(--red); }
 
     /* ── thought detail panel ── */
     #detail-panel { --detail-w: clamp(480px, 40vw, 820px); position: fixed; top: 0; right: 0; bottom: 0; width: var(--detail-w); max-width: 95vw; min-width: 360px; background: var(--surface); border-left: 1px solid var(--border); transform: translateX(100%); transition: transform 0.18s ease; display: flex; flex-direction: column; z-index: 60; }
@@ -216,7 +217,8 @@
   <div id="detail-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize note detail panel" tabindex="0"></div>
   <div id="detail-head">
     <h2 id="detail-title">Note</h2>
-    <button id="detail-close" aria-label="Close note detail">Close ✕</button>
+     <button id="detail-delete" class="result-btn danger" aria-label="Delete note">Delete</button>
+     <button id="detail-close" aria-label="Close note detail">Close ✕</button>
   </div>
   <div id="detail-content"></div>
 </div>
@@ -480,6 +482,13 @@ function buildResultCard(row) {
     openDetail(row.id);
   });
   actions.appendChild(openBtn);
+  const deleteBtn = el('button', 'result-btn danger');
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    deleteThought(row.id, card);
+  });
+  actions.appendChild(deleteBtn);
   card.appendChild(actions);
 
   // Attach the expand toggle only if the body is actually clipped. Measured
@@ -669,6 +678,7 @@ const detailBackdrop = document.getElementById('detail-backdrop');
 const detailContent  = document.getElementById('detail-content');
 const detailTitle    = document.getElementById('detail-title');
 const detailCloseBtn = document.getElementById('detail-close');
+const detailDeleteBtn = document.getElementById('detail-delete');
 const detailResize   = document.getElementById('detail-resize-handle');
 const DETAIL_WIDTH_KEY = 'openbrain.detailWidth';
 const DETAIL_MIN_WIDTH = 360;
@@ -743,6 +753,9 @@ function closeDetail() {
 
 detailCloseBtn.addEventListener('click', closeDetail);
 detailBackdrop.addEventListener('click', closeDetail);
+detailDeleteBtn.addEventListener('click', function() {
+  if (detailDeleteBtn.dataset.id) deleteThought(detailDeleteBtn.dataset.id, null, true);
+});
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape' && detailPanel.classList.contains('open')) closeDetail();
 });
@@ -755,6 +768,8 @@ async function openDetail(id) {
   detailPanel.setAttribute('aria-hidden', 'false');
   detailTitle.textContent = 'Note';
   detailContent.textContent = 'Loading…';
+  detailDeleteBtn.dataset.id = id;
+  detailDeleteBtn.disabled = false;
   detailCloseBtn.focus();
 
   try {
@@ -796,6 +811,18 @@ async function openDetail(id) {
     detailContent.appendChild(bodyWrap);
   } catch (err) {
     detailContent.textContent = 'Failed to load note: ' + err.message;
+  }
+}
+
+async function deleteThought(id, card, closePanel) {
+  if (!id || !window.confirm('Permanently delete this thought? This cannot be undone.')) return;
+  try {
+    const res = await fetch('/api/thought-delete/' + encodeURIComponent(id) + tokenQS(), { method: 'DELETE' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (card) card.remove();
+    if (closePanel) closeDetail();
+  } catch (err) {
+    window.alert('Failed to delete thought: ' + err.message);
   }
 }
 

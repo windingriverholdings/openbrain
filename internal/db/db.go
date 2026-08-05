@@ -56,6 +56,24 @@ func InsertThought(ctx context.Context, p *pgxpool.Pool, content string, embeddi
 	return id, nil
 }
 
+// DeleteThought permanently removes a thought. Related subject links are
+// removed by the database's ON DELETE CASCADE constraint.
+func DeleteThought(ctx context.Context, p *pgxpool.Pool, id string) error {
+	result, err := p.Exec(ctx, `DELETE FROM thoughts WHERE id = $1::uuid`, id)
+	if err != nil {
+		return fmt.Errorf("delete thought: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	shortID := id
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	slog.Info("thought deleted", "id", shortID)
+	return nil
+}
+
 // thoughtInserter is satisfied by both *pgxpool.Pool and pgx.Tx, letting
 // insertThoughtTx run identically whether or not it is inside an explicit
 // transaction.

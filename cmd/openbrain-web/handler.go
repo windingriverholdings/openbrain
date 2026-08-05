@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/windingriverholdings/openbrain/internal/brain"
 	"github.com/windingriverholdings/openbrain/internal/config"
@@ -156,6 +157,7 @@ func buildMux(cfg *config.Config, b *brain.Brain, embedder embeddings.Embedder) 
 	mux.Handle("/api/search", staticAuth(cfg.WebWSToken, apiSearch(b)))
 	mux.Handle("/api/search/nodes", staticAuth(cfg.WebWSToken, apiSearchNodes(b)))
 	mux.Handle("/api/thought/", staticAuth(cfg.WebWSToken, apiGetThought(b)))
+	mux.Handle("/api/thought-delete/", staticAuth(cfg.WebWSToken, apiDeleteThought(b)))
 	mux.Handle("/api/capture", staticAuth(cfg.WebWSToken, apiCapture(b)))
 	mux.Handle("/api/stats", staticAuth(cfg.WebWSToken, apiStats(b)))
 	mux.Handle("/api/review", staticAuth(cfg.WebWSToken, apiReview(b)))
@@ -424,6 +426,31 @@ func apiGetThought(b *brain.Brain) http.HandlerFunc {
 			Content:   thought.Content,
 			CreatedAt: thought.CreatedAt.Format("2006-01-02 15:04"),
 		})
+	}
+}
+
+// apiDeleteThought permanently deletes one thought by UUID.
+// Route: DELETE /api/thought-delete/{uuid}
+func apiDeleteThought(b *brain.Brain) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/api/thought-delete/")
+		if id == "" || strings.Contains(id, "/") {
+			http.Error(w, "missing thought id", http.StatusBadRequest)
+			return
+		}
+		if err := b.DeleteThought(r.Context(), id); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				http.Error(w, "thought not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"id": id, "status": "deleted"})
 	}
 }
 

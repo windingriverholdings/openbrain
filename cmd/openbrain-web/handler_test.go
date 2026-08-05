@@ -171,6 +171,33 @@ func TestWsHandler_WithToken_RejectsWrong(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
+func TestApiDeleteThought_RejectsNonDelete(t *testing.T) {
+	b := brain.New(nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/thought-delete/123", nil)
+	rr := httptest.NewRecorder()
+	apiDeleteThought(b)(rr, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
+}
+
+func TestApiDeleteThought_RejectsMissingID(t *testing.T) {
+	b := brain.New(nil, nil, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/thought-delete/", nil)
+	rr := httptest.NewRecorder()
+	apiDeleteThought(b)(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestApiDeleteThought_RejectsPathTraversal(t *testing.T) {
+	b := brain.New(nil, nil, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/thought-delete/a/b", nil)
+	rr := httptest.NewRecorder()
+	apiDeleteThought(b)(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
 func TestWsHandler_ResponseFormat(t *testing.T) {
 	// Create a brain with nil deps — Help intent doesn't use DB or embedder
 	b := brain.New(nil, nil, nil)
