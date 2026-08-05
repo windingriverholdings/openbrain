@@ -14,10 +14,49 @@
       --mono: 'JetBrains Mono', 'Fira Code', monospace;
     }
     body { background: var(--bg); color: var(--text); font-size: var(--base-size); font-family: var(--font); height: 100dvh; display: flex; flex-direction: column; }
-    header { display: flex; align-items: center; gap: 10px; padding: 0 20px; height: 52px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 20px;
+      height: 52px;
+      background: rgba(26, 29, 39, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin: 12px 12px 0 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+      flex-shrink: 0;
+    }
     header span[aria-hidden="true"] { font-size: 22px; line-height: 1; }
     header h1 { font-size: 19.8px; font-weight: 600; }
-    header .status { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-dim); }
+    #graph-link {
+      margin-left: auto;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border: none;
+      border-radius: 8px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 12px rgba(108, 142, 245, 0.25);
+      transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+    }
+    #graph-link:hover {
+      background: #8ea6ff;
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(108, 142, 245, 0.35);
+      transform: translateY(-1px);
+    }
+    #graph-link:active {
+      transform: translateY(1px);
+    }
+    header .status { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-dim); }
     header .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); transition: background 0.3s; }
     header .dot.connected { background: var(--green); }
     #messages { flex: 1; overflow-y: auto; padding: 20px 20px 150px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
@@ -144,7 +183,7 @@
 <header>
   <span aria-hidden="true">🧠</span>
   <h1>OpenBrain</h1>
-  <a id="graph-link" href="/graph" style="margin-left:auto;font-size:0.75rem;color:var(--text-dim);text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 9px;border:1px solid var(--border);border-radius:6px;" onmouseover="this.style.borderColor='var(--accent-dim)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">🗺 Brain Map</a>
+  <a id="graph-link" href="/graph">🗺 Brain Map</a>
   <div class="status">
     <div class="dot" id="dot"></div>
     <span id="status-text">Connecting…</span>

@@ -71,8 +71,13 @@
       gap: 10px;
       padding: 0 20px;
       height: 52px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+      background: rgba(26, 29, 39, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin: 12px 12px 0 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
       flex-shrink: 0;
     }
     header span[aria-hidden="true"] { font-size: 22px; line-height: 1; }
