@@ -641,6 +641,11 @@ func staticAuth(authToken string, next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") || strings.HasSuffix(path, ".ico") || strings.HasSuffix(path, ".png") || strings.HasSuffix(path, ".svg") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		qToken := r.URL.Query().Get("token")
 		if subtle.ConstantTimeCompare([]byte(qToken), []byte(authToken)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)

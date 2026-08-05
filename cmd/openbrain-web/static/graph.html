@@ -6,7 +6,8 @@
   <title>OpenBrain — Brain Map</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
+     :root {
+       --composer-z-index: 200;
       /* ── app design tokens (match index.html) ── */
       --bg:         #0f1117;
       --surface:    #1a1d27;
@@ -43,17 +44,39 @@
       overflow: hidden;
     }
 
+    /* ── custom scrollbars ── */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--surface);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--accent-dim);
+    }
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) var(--surface);
+    }
+
     /* ── header (mirrors index.html) ── */
     header {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 14px 20px;
+      padding: 0 20px;
+      height: 52px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
-    header h1 { font-size: 1.1rem; font-weight: 600; }
+    header span[aria-hidden="true"] { font-size: 22px; line-height: 1; }
+    header h1 { font-size: 19.8px; font-weight: 600; }
     .back-link {
       font-size: 0.8rem;
       color: var(--text-dim);
@@ -192,21 +215,183 @@
     #canvas-wrap.panning { cursor: grabbing; }
     #brain-canvas { position: absolute; inset: 0; }
 
-    /* ── legend sidebar ── */
-    #legend {
-      flex: 0 0 200px;
-      overflow-y: auto;
-      padding: 14px 12px;
-      background: var(--surface);
-      border-left: 1px solid var(--border);
+    /* ── settings panel ── */
+    #settings-panel {
+      flex: 0 0 320px;
+      width: 320px;
+      background: none;
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+      gap: 12px;
+      transition: flex-basis 0.2s ease, width 0.2s ease, min-width 0.2s ease, padding 0.2s ease;
+      box-shadow: none;
+      border-left: none;
+      z-index: 205;
     }
-    #legend h2 {
-      font-size: 0.7rem;
+    #settings-panel.collapsed {
+      flex: 0 0 0px;
+      width: 0;
+      min-width: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: rgba(26, 29, 39, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.22);
+      flex-shrink: 0;
+    }
+    .settings-header h2 {
+      font-size: 0.85rem;
       text-transform: uppercase;
       letter-spacing: 0.07em;
       color: var(--text-dim);
-      margin-bottom: 10px;
+      margin: 0;
     }
+    #close-settings {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 1.1rem;
+      padding: 4px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    #close-settings:hover {
+      color: var(--text);
+    }
+    .settings-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-bottom: 120px;
+    }
+    
+    /* Bento Box UI Cards */
+    .settings-section {
+      background: rgba(26, 29, 39, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.22);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .settings-section:hover {
+      border-color: var(--accent-dim);
+    }
+    
+    .settings-section h3 {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      margin: 0 0 12px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding-bottom: 6px;
+    }
+    .settings-visual-buttons {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .settings-visual-buttons .btn {
+      flex: 1;
+      text-align: center;
+    }
+    .settings-slider-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .settings-slider-group label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+    .settings-slider-group input[type=range] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+    .timeline-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .timeline-slider-wrap {
+      position: relative;
+      width: 100%;
+      height: 20px;
+      margin: 4px 0;
+    }
+    .timeline-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .timeline-label {
+      font-size: 0.75rem;
+      color: var(--text);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .actions-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .action-btn {
+      width: 100%;
+      text-align: center;
+      padding: 8px 12px !important;
+    }
+    
+    /* ── toggle settings button ── */
+    .toggle-settings-btn {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 10;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+    }
+    .toggle-settings-btn:hover {
+      border-color: var(--accent-dim);
+      background: var(--surface2);
+    }
+    .toggle-settings-btn:active {
+      transform: scale(0.97);
+    }
+    .settings-icon {
+      font-size: 0.9rem;
+      line-height: 1;
+    }
+
+    /* ── legend items ── */
     .legend-item {
       display: flex;
       align-items: flex-start;
@@ -216,6 +401,10 @@
       padding: 4px 5px;
       border-radius: 6px;
       transition: background 0.1s;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
     }
     .legend-item:hover { background: var(--surface2); }
     .legend-item.dimmed { opacity: 0.3; }
@@ -230,13 +419,9 @@
 
     /* ── type pills ── */
     #type-filter {
-      padding: 7px 20px;
-      background: var(--surface);
-      border-top: 1px solid var(--border);
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
-      flex-shrink: 0;
     }
     .type-pill {
       border: 1px solid var(--border);
@@ -334,7 +519,7 @@
     #refresh-indicator {
       position: absolute;
       left: 14px;
-      bottom: 14px;
+      top: 14px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
@@ -380,51 +565,6 @@
     #refresh-dismiss-btn:hover { border-color: var(--red); color: var(--red); }
     #refresh-dismiss-btn.hidden { display: none; }
 
-    /* ── thought detail panel (slides in from right) ── */
-    #detail-panel {
-      position: fixed;
-      top: 0; right: 0; bottom: 0;
-      width: 420px;
-      background: var(--surface);
-      border-left: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      z-index: 300;
-      transform: translateX(100%);
-      transition: transform 0.22s ease;
-      box-shadow: -8px 0 32px rgba(0,0,0,0.45);
-    }
-    #detail-panel.open { transform: translateX(0); }
-
-    #detail-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-      gap: 10px;
-    }
-    #detail-type {
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      color: var(--text-dim);
-    }
-    #detail-close {
-      background: transparent;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--text-dim);
-      font-family: var(--font);
-      font-size: 0.8rem;
-      padding: 3px 9px;
-      cursor: pointer;
-      flex-shrink: 0;
-      transition: border-color 0.15s, color 0.15s;
-    }
-    #detail-close:hover { border-color: var(--accent-dim); color: var(--text); }
-
     #detail-body {
       flex: 1 1 auto;
       overflow-y: auto;
@@ -463,13 +603,6 @@
       border-top: 1px solid var(--border);
       margin: 12px 0;
     }
-    #detail-content {
-      font-size: 0.82rem;
-      color: var(--text);
-      line-height: 1.7;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
     #detail-date {
       font-size: 0.68rem;
       color: var(--text-dim);
@@ -483,54 +616,6 @@
       text-align: center;
       padding: 40px 0;
     }
-
-    /* ── search chat panel (bottom-right, fixed overlay) ── */
-    #search-panel {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      width: 320px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: 0 8px 32px rgba(0,0,0,0.55);
-      display: flex;
-      flex-direction: column;
-      z-index: 200;
-      transition: height 0.18s ease;
-    }
-    #search-panel.collapsed { height: auto; }
-
-    #search-panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 9px 12px;
-      border-bottom: 1px solid var(--border);
-      cursor: pointer;
-      user-select: none;
-      flex-shrink: 0;
-    }
-    #search-panel-header span {
-      font-size: 0.78rem;
-      font-weight: 600;
-      color: var(--text-dim);
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-    }
-    #search-panel-toggle {
-      font-size: 0.75rem;
-      color: var(--text-dim);
-      transition: transform 0.18s;
-    }
-    #search-panel.collapsed #search-panel-toggle { transform: rotate(180deg); }
-
-    #search-panel-body {
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    #search-panel.collapsed #search-panel-body { display: none; }
 
     #search-results {
       overflow-y: auto;
@@ -577,55 +662,62 @@
       text-align: center;
     }
 
-    #search-panel-footer {
-      padding: 8px 10px;
-      border-top: 1px solid var(--border);
+    #search-results {
+      position: fixed;
+      right: 20px;
+      bottom: 170px;
+      width: min(420px, calc(100vw - 40px));
+      max-height: 280px;
+      background: rgba(26, 29, 39, 0.72);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+      z-index: 201;
+      display: none;
+      flex-direction: column;
+    }
+    #search-results.visible {
       display: flex;
-      gap: 6px;
+    }
+    .search-results-header {
+      display: flex;
       align-items: center;
-      flex-shrink: 0;
-    }
-    #search-input {
-      flex: 1;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--text);
-      font-family: var(--font);
-      font-size: 0.8rem;
-      padding: 5px 9px;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    #search-input:focus { border-color: var(--accent-dim); }
-    #search-input::placeholder { color: var(--text-dim); }
-    #search-submit {
-      flex-shrink: 0;
-      background: var(--accent-dim);
-      border: none;
-      border-radius: 6px;
-      color: var(--accent);
-      font-family: var(--font);
-      font-size: 0.78rem;
-      padding: 5px 10px;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    #search-submit:hover { background: var(--accent); color: var(--bg); }
-    #search-clear {
-      flex-shrink: 0;
-      background: transparent;
-      border: 1px solid var(--border);
-      border-radius: 6px;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.72rem;
+      font-weight: 600;
       color: var(--text-dim);
-      font-family: var(--font);
-      font-size: 0.78rem;
-      padding: 5px 8px;
-      cursor: pointer;
-      transition: border-color 0.15s, color 0.15s;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      flex-shrink: 0;
     }
-    #search-clear:hover { border-color: var(--red); color: var(--red); }
-    #search-clear.hidden { display: none; }
+    #close-search-results {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 2px 4px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    #close-search-results:hover {
+      color: var(--text);
+    }
+    #search-results-items {
+      overflow-y: auto;
+      flex: 1 1 auto;
+      padding: 6px 0;
+    }
+    .search-result-item { padding: 7px 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+    .search-result-item:last-child { border-bottom: none; }
+    .search-result-item:hover { background: var(--surface2); }
+    @media (max-width: 640px) {
+      #search-results { right: 10px; bottom: 155px; width: calc(100vw - 20px); }
+    }
 
     /* ── screen-reader-only utility ── */
     .sr-only {
@@ -648,45 +740,25 @@
       font-size: inherit;
     }
   </style>
+  <link rel="stylesheet" href="/detail.css" />
+  <link rel="stylesheet" href="/composer.css" />
 </head>
 <body>
 
 <header>
   <span aria-hidden="true">🧠</span>
-  <h1>Brain Map</h1>
-  <a href="/" id="back-to-chat" class="back-link">← Chat</a>
+  <h1>OpenBrain</h1>
   <span class="header-stats" id="header-stats"></span>
+  <a href="/" id="back-to-chat" class="back-link">← Chat</a>
 </header>
-
-<div class="controls">
-  <button class="btn active" id="btn-edges">Edges</button>
-  <button class="btn active" id="btn-labels">Labels</button>
-  <div class="sep"></div>
-  <label>
-    Node size
-    <input type="range" id="node-size" min="2" max="10" value="5" step="0.5"/>
-  </label>
-  <div class="sep"></div>
-  <button class="btn" id="btn-reset" title="Double-click canvas to reset too">Reset view</button>
-  <div class="sep"></div>
-  <button class="btn" id="btn-rebuild" title="Run the map projection now to generate a new brain.json">Generate new map</button>
-  <div class="sep"></div>
-  <div class="timeline-wrap" id="timeline-wrap" style="display:none">
-    <span style="font-size:0.75rem;color:var(--text-dim)">Timeline</span>
-    <div class="timeline-slider-wrap" id="timeline-slider-wrap">
-      <div class="timeline-track"><div class="timeline-track-fill" id="timeline-track-fill"></div></div>
-      <input type="range" id="range-from" min="0" max="1000" value="0" step="1" aria-label="Timeline start"/>
-      <input type="range" id="range-to"   min="0" max="1000" value="1000" step="1" aria-label="Timeline end"/>
-    </div>
-    <span class="timeline-label" id="timeline-label">all time</span>
-    <button class="btn" id="btn-timeline-reset" title="Show all time">All</button>
-  </div>
-</div>
 
 <div class="main">
   <div id="canvas-wrap">
     <canvas id="brain-canvas"
-      aria-label="Similarity map of captured thoughts; use the region legend and type filter buttons to explore"></canvas>
+      aria-label="Similarity map of captured thoughts; use the settings panel to explore"></canvas>
+    <button id="toggle-settings" class="toggle-settings-btn" aria-label="Toggle map settings">
+      <span class="settings-icon">⚙️</span> Settings
+    </button>
     <p id="sr-summary" class="sr-only" aria-live="polite"></p>
     <div id="state-overlay">
       <div class="icon">🧠</div>
@@ -706,46 +778,77 @@
       <button id="refresh-dismiss-btn" class="hidden" title="Dismiss">✕</button>
     </div>
   </div>
-  <aside id="legend">
-    <h2>Brain regions</h2>
-    <div id="legend-items"></div>
+  <aside id="settings-panel" class="settings-panel collapsed">
+    <div class="settings-header">
+      <h2>Map Settings</h2>
+      <button id="close-settings" aria-label="Close settings">✕</button>
+    </div>
+    
+    <div class="settings-body">
+      <section class="settings-section actions-section">
+        <h3>Actions</h3>
+        <button class="btn action-btn" id="btn-reset" title="Double-click canvas to reset too">Reset view</button>
+        <button class="btn action-btn" id="btn-rebuild" title="Run the map projection now to generate a new brain.json">Generate new map</button>
+      </section>
+
+      <section class="settings-section">
+        <h3>Visuals</h3>
+        <div class="settings-visual-buttons">
+          <button class="btn active" id="btn-edges">Edges</button>
+          <button class="btn active" id="btn-labels">Labels</button>
+        </div>
+        <div class="settings-slider-group">
+          <label for="node-size">Node size</label>
+          <input type="range" id="node-size" min="2" max="10" value="5" step="0.5"/>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Timeline</h3>
+        <div class="timeline-wrap" id="timeline-wrap" style="display:none">
+          <div class="timeline-slider-wrap" id="timeline-slider-wrap">
+            <div class="timeline-track"><div class="timeline-track-fill" id="timeline-track-fill"></div></div>
+            <input type="range" id="range-from" min="0" max="1000" value="0" step="1" aria-label="Timeline start"/>
+            <input type="range" id="range-to"   min="0" max="1000" value="1000" step="1" aria-label="Timeline end"/>
+          </div>
+          <div class="timeline-meta">
+            <span class="timeline-label" id="timeline-label">all time</span>
+            <button class="btn" id="btn-timeline-reset" title="Show all time">All</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Types</h3>
+        <div id="type-filter"></div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Regions</h3>
+        <div id="legend-items"></div>
+      </section>
+    </div>
   </aside>
 </div>
 
-<div id="type-filter"></div>
 <div id="tooltip"></div>
-
-<!-- ── thought detail panel ── -->
-<div id="detail-panel" role="dialog" aria-label="Thought detail" aria-modal="true">
-  <div id="detail-header">
-    <span id="detail-type"></span>
-    <button id="detail-close" aria-label="Close detail panel">Close ✕</button>
+<div id="search-results" aria-live="polite" aria-label="Search results">
+  <div class="search-results-header">
+    <span>Search Results</span>
+    <button id="close-search-results" aria-label="Close search results">✕</button>
   </div>
-  <div id="detail-body">
-    <p id="detail-loading">Loading…</p>
+  <div id="search-results-items">
+    <p class="search-empty">Search to highlight matching nodes.</p>
   </div>
 </div>
 
-<!-- ── search chat panel ── -->
-<div id="search-panel" role="search" aria-label="Search memories">
-  <div id="search-panel-header" role="button" tabindex="0" aria-expanded="true"
-       aria-controls="search-panel-body">
-    <span>🔍 Search memories</span>
-    <span id="search-panel-toggle" aria-hidden="true">▼</span>
-  </div>
-  <div id="search-panel-body">
-    <div id="search-results" aria-live="polite" aria-label="Search results">
-      <p class="search-empty">Search to highlight matching nodes.</p>
-    </div>
-    <div id="search-panel-footer">
-      <input id="search-input" type="search" placeholder="Search your memories…"
-             autocomplete="off" spellcheck="false"/>
-      <button id="search-submit" title="Search (Enter)">Go</button>
-      <button id="search-clear" class="hidden" title="Clear highlights">✕</button>
-    </div>
-  </div>
-</div>
+<script src="/detail.js"></script>
 
+<!-- ── shared centered composer ── -->
+<div id="composer-host"></div>
+
+<script src="/composer.js"></script>
+<script>OpenBrainComposer.mount({ mode: 'search' });</script>
 <script>
 'use strict';
 (() => {
@@ -916,19 +1019,30 @@ function render() {
   }
 
   if (showLabels) {
-    ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+    const scaleFactor = Math.sqrt(transform.k);
+    const fontSize = Math.max(7, Math.min(14, Math.round(11 * scaleFactor)));
+    const alpha = Math.max(0.15, Math.min(1, (transform.k - 0.25) / 0.55));
+
+    ctx.font = `bold ${fontSize}px Inter, system-ui, sans-serif`;
     ctx.textAlign = 'center';
+
     for (const cl of DATA.clusters) {
       if (cl.id < 0 || hiddenClusters.has(cl.id)) continue;
       const [cx, cy] = toScreen(cl.cx, cl.cy);
       const tw = ctx.measureText(cl.label).width;
-      ctx.fillStyle = 'rgba(15,17,23,0.82)';
+
+      ctx.globalAlpha = alpha;
+
+      ctx.fillStyle = 'rgba(15,17,23,0.85)';
       ctx.beginPath();
-      ctx.roundRect(cx - tw / 2 - 6, cy - 9, tw + 12, 18, 4);
+      const h = fontSize + 8;
+      ctx.roundRect(cx - tw / 2 - 6, cy - h / 2, tw + 12, h, 4);
       ctx.fill();
+
       ctx.fillStyle = clusterColor(cl.id);
-      ctx.fillText(cl.label, cx, cy + 4);
+      ctx.fillText(cl.label, cx, cy + fontSize * 0.35);
     }
+    ctx.globalAlpha = 1.0;
   }
 }
 
@@ -1146,7 +1260,17 @@ function tokenQS() {
 
 // Keep the web auth token when navigating back to chat.
 const backToChat = document.getElementById('back-to-chat');
-if (backToChat) backToChat.href = '/' + location.search;
+if (backToChat) {
+  // Build the destination from the current URL so the auth query survives
+  // navigation even when the page is served from a nested path.
+  const chatURL = new URL('/', location.href);
+  chatURL.search = location.search;
+  backToChat.href = chatURL.href;
+  backToChat.addEventListener('click', event => {
+    event.preventDefault();
+    window.location.assign('/' + location.search);
+  });
+}
 
 async function fetchVizStatus() {
   const res = await fetch('/api/rebuild-viz/status' + tokenQS());
@@ -1333,19 +1457,19 @@ async function finishVizLoad(status, preserveState) {
 // Entry point, called on page load. Status is informational only and must not
 // trigger a projection.
 async function checkVizStatusAndLoad() {
-  let status;
+  // Load the snapshot independently of the optional rebuild-status endpoint.
+  // A status request must never leave the map on the loading overlay.
+  let status = null;
   try {
     status = await fetchVizStatus();
   } catch (err) {
     // Status is auxiliary to loading the snapshot. A status-endpoint hiccup
     // must not block an otherwise-servable map or start a build.
     console.error('brain-map: status check failed, falling back to a plain data load:', err);
-    await loadData();
-    return;
   }
 
   await loadData();
-  if (status.degraded) noteDegraded();
+  if (status && status.degraded) noteDegraded();
 }
 
 // Manual "Generate new map" button: the only page action that triggers the
@@ -1465,26 +1589,16 @@ document.getElementById('node-size').addEventListener('input', function() {
 });
 
 // ── detail panel ─────────────────────────────────────────────────────────────
-const detailPanel  = document.getElementById('detail-panel');
-const detailBody   = document.getElementById('detail-body');
-const detailType   = document.getElementById('detail-type');
-const detailClose  = document.getElementById('detail-close');
-
-function closeDetail() {
-  detailPanel.classList.remove('open');
-}
-
-detailClose.addEventListener('click', closeDetail);
-
-// Close on Escape key
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && detailPanel.classList.contains('open')) closeDetail();
-});
+const detailContent = window.OpenBrainDetail.content;
+const detailTitle = window.OpenBrainDetail.title;
+const closeDetail = window.OpenBrainDetail.close;
 
 async function openDetail(nodeId) {
-  detailPanel.classList.add('open');
-  detailType.textContent = '';
-  detailBody.innerHTML = '<p id="detail-loading">Loading…</p>';
+  window.OpenBrainDetail.open('Loading…');
+  const body = document.createElement('div');
+  body.id = 'detail-body';
+  body.innerHTML = '<p id="detail-loading">Loading…</p>';
+  detailContent.appendChild(body);
 
   try {
     const token = new URLSearchParams(location.search).get('token') || '';
@@ -1495,28 +1609,52 @@ async function openDetail(nodeId) {
     const t = await res.json();
 
     const icon = TYPE_ICONS[t.type] || '📄';
-    detailType.textContent = `${icon} ${t.type}`;
+    detailTitle.textContent = `${icon} ${t.type}`;
 
-    const tagsHtml = t.tags.length
-      ? t.tags.map(tag => `<span class="detail-tag">${esc(tag)}</span>`).join('')
-      : '';
-    const sourceHtml = t.source
-      ? `<div id="detail-source">📂 ${esc(t.source)}</div>`
-      : '';
-    const summaryHtml = t.summary
-      ? `<div id="detail-summary">${esc(t.summary)}</div>`
-      : '';
+    body.innerHTML = '';
 
-    detailBody.innerHTML =
-      summaryHtml +
-      (tagsHtml ? `<div id="detail-meta">${tagsHtml}</div>` : '') +
-      sourceHtml +
-      `<hr id="detail-divider"/>` +
-      `<div id="detail-content">${esc(t.content)}</div>` +
-      `<div id="detail-date">Captured ${esc(t.created_at)}</div>`;
+    if (t.summary) {
+      const sum = document.createElement('div');
+      sum.id = 'detail-summary';
+      renderNoteBody(t.summary, sum);
+      body.appendChild(sum);
+    }
+
+    if (t.tags.length) {
+      const meta = document.createElement('div');
+      meta.id = 'detail-meta';
+      t.tags.forEach(tag => {
+        const span = document.createElement('span');
+        span.className = 'detail-tag';
+        span.textContent = tag;
+        meta.appendChild(span);
+      });
+      body.appendChild(meta);
+    }
+
+    if (t.source) {
+      const src = document.createElement('div');
+      src.id = 'detail-source';
+      src.textContent = `📂 ${t.source}`;
+      body.appendChild(src);
+    }
+
+    const hr = document.createElement('hr');
+    hr.id = 'detail-divider';
+    body.appendChild(hr);
+
+    const content = document.createElement('div');
+    content.id = 'detail-content';
+    renderNoteBody(t.content, content);
+    body.appendChild(content);
+
+    const date = document.createElement('div');
+    date.id = 'detail-date';
+    date.textContent = `Captured ${t.created_at}`;
+    body.appendChild(date);
 
   } catch (err) {
-    detailBody.innerHTML =
+    body.innerHTML =
       `<p style="color:var(--red);font-size:0.82rem">Failed to load: ${esc(err.message)}</p>`;
   }
 }
@@ -1551,48 +1689,122 @@ function panToNode(n) {
 }
 
 // ── search panel ─────────────────────────────────────────────────────────────
-const searchInput   = document.getElementById('search-input');
-const searchSubmit  = document.getElementById('search-submit');
-const searchClear   = document.getElementById('search-clear');
+const searchInput   = document.getElementById('input');
+const searchSubmit  = document.getElementById('send');
 const searchResults = document.getElementById('search-results');
-const panelHeader   = document.getElementById('search-panel-header');
-const searchPanel   = document.getElementById('search-panel');
+const searchResultsItems = document.getElementById('search-results-items');
+const closeSearchResultsBtn = document.getElementById('close-search-results');
+const composerEl    = document.getElementById('composer');
+const moreOptionsBtn = document.getElementById('more-options-btn');
+const searchOptionsEl = document.getElementById('search-options');
+const searchModeEl  = document.getElementById('search-mode');
+const searchModeLabelEl = document.getElementById('search-mode-label');
+const strategyWrapEl = document.getElementById('search-strategy-wrap');
+const searchFromEl = document.getElementById('search-from');
+const searchToEl = document.getElementById('search-to');
+const searchTimeResetEl = document.getElementById('search-time-reset');
+const aiSummarizeEl = document.getElementById('ai-summarize');
+const aiSummarizeWrapEl = document.getElementById('ai-summarize-wrap');
+const toggleSettingsBtn = document.getElementById('toggle-settings');
+const settingsPanelEl = document.getElementById('settings-panel');
+const closeSettingsBtn = document.getElementById('close-settings');
+let surfaceMode = 'search';
+let searchStrategy = 'hybrid';
 
-panelHeader.addEventListener('click', () => {
-  searchPanel.classList.toggle('collapsed');
-  const expanded = !searchPanel.classList.contains('collapsed');
-  panelHeader.setAttribute('aria-expanded', String(expanded));
-});
-panelHeader.addEventListener('keydown', e => {
-  if (e.key === 'Enter' || e.key === ' ') {
-    e.preventDefault();
-    panelHeader.click();
+try {
+  const savedMode = localStorage.getItem('openbrain.surfaceMode');
+  if (savedMode === 'search' || savedMode === 'store') surfaceMode = savedMode;
+  const savedStrategy = localStorage.getItem('openbrain.searchStrategy');
+  if (savedStrategy === 'vector' || savedStrategy === 'hybrid' || savedStrategy === 'ai') searchStrategy = savedStrategy;
+} catch (_) { /* storage unavailable */ }
+
+function updateSurfaceMode(mode) {
+  surfaceMode = mode === 'store' ? 'store' : 'search';
+  const isSearch = surfaceMode === 'search';
+  composerEl.classList.toggle('mode-search', isSearch);
+  searchModeEl.setAttribute('aria-pressed', String(isSearch));
+  searchModeLabelEl.textContent = isSearch ? 'Search' : 'Store';
+  searchInput.placeholder = isSearch ? 'What would you like to find?' : 'What would you like to remember?';
+  strategyWrapEl.classList.toggle('visible', isSearch);
+  aiSummarizeWrapEl.classList.toggle('visible', isSearch);
+  aiSummarizeEl.disabled = !isSearch;
+  try { localStorage.setItem('openbrain.surfaceMode', surfaceMode); } catch (_) { /* storage unavailable */ }
+}
+
+function setSearchStrategy(mode) {
+  if (mode !== 'vector' && mode !== 'hybrid' && mode !== 'ai') return;
+  searchStrategy = mode;
+  strategyWrapEl.querySelectorAll('.strategy-option').forEach(option => {
+    option.setAttribute('aria-checked', String(option.dataset.mode === mode));
+  });
+  try { localStorage.setItem('openbrain.searchStrategy', mode); } catch (_) { /* storage unavailable */ }
+}
+
+function normalizeSearchDateRange() {
+  if (searchFromEl.value && searchToEl.value && searchFromEl.value > searchToEl.value) {
+    searchToEl.value = searchFromEl.value;
   }
+}
+
+moreOptionsBtn.addEventListener('click', () => {
+  const open = moreOptionsBtn.getAttribute('aria-expanded') === 'true';
+  moreOptionsBtn.setAttribute('aria-expanded', String(!open));
+  searchOptionsEl.hidden = open;
+});
+document.addEventListener('click', event => {
+  if (!event.target.closest('#more-options')) {
+    moreOptionsBtn.setAttribute('aria-expanded', 'false');
+    searchOptionsEl.hidden = true;
+  }
+});
+
+searchFromEl.addEventListener('change', normalizeSearchDateRange);
+searchToEl.addEventListener('change', normalizeSearchDateRange);
+searchTimeResetEl.addEventListener('click', () => {
+  searchFromEl.value = '';
+  searchToEl.value = '';
+  moreOptionsBtn.setAttribute('aria-expanded', 'false');
+  searchOptionsEl.hidden = true;
+});
+searchModeEl.addEventListener('click', () => updateSurfaceMode(surfaceMode === 'search' ? 'store' : 'search'));
+strategyWrapEl.querySelectorAll('.strategy-option').forEach(option => {
+  option.addEventListener('click', () => setSearchStrategy(option.dataset.mode));
+});
+aiSummarizeEl.addEventListener('click', () => {
+  if (surfaceMode === 'search') aiSummarizeEl.setAttribute('aria-pressed', String(aiSummarizeEl.getAttribute('aria-pressed') !== 'true'));
 });
 
 function clearSearch() {
   highlightedIds = new Set();
   scoreById = {};
-  searchResults.innerHTML = '<p class="search-empty">Search to highlight matching nodes.</p>';
-  searchClear.classList.add('hidden');
+  searchResults.classList.remove('visible');
+  searchResultsItems.innerHTML = '<p class="search-empty">Search to highlight matching nodes.</p>';
   searchInput.value = '';
+  searchInput.style.height = 'auto';
   if (DATA) render();
 }
+
+closeSearchResultsBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  searchResults.classList.remove('visible');
+});
 
 async function runSearch() {
   const q = searchInput.value.trim();
   if (!q) return;
 
-  searchResults.innerHTML = '<p class="search-empty">Searching…</p>';
+  searchResults.classList.add('visible');
+  searchResultsItems.innerHTML = '<p class="search-empty">Searching…</p>';
   searchSubmit.disabled = true;
 
   try {
     const isFullRange = !dataDateMin || (dateMin <= dataDateMin && dateMax >= dataDateMax);
     let searchURL = '/api/search/nodes?q=' + encodeURIComponent(q);
-    if (!isFullRange) {
-      searchURL += '&from=' + encodeURIComponent(fmtDate(dateMin));
-      searchURL += '&to='   + encodeURIComponent(fmtDate(dateMax));
-    }
+    if (searchFromEl.value) searchURL += '&from=' + encodeURIComponent(searchFromEl.value);
+    else if (!isFullRange) searchURL += '&from=' + encodeURIComponent(fmtDate(dateMin));
+    if (searchToEl.value) searchURL += '&to=' + encodeURIComponent(searchToEl.value);
+    else if (!isFullRange) searchURL += '&to=' + encodeURIComponent(fmtDate(dateMax));
+    if (searchStrategy === 'vector') searchURL += '&mode=vector';
     const token = new URLSearchParams(location.search).get('token') || '';
     if (token) searchURL += '&token=' + encodeURIComponent(token);
     const res = await fetch(searchURL);
@@ -1604,8 +1816,7 @@ async function runSearch() {
     rows.forEach(r => { scoreById[r.id] = r.score; });
 
     if (rows.length === 0) {
-      searchResults.innerHTML = '<p class="search-empty">No matching memories found.</p>';
-      searchClear.classList.remove('hidden');
+      searchResultsItems.innerHTML = '<p class="search-empty">No matching memories found.</p>';
       if (DATA) render();
       return;
     }
@@ -1628,8 +1839,7 @@ async function runSearch() {
           `<div class="sri-text">${esc(preview)}</div>` +
         `</div>`;
     }
-    searchResults.innerHTML = html;
-    searchClear.classList.remove('hidden');
+    searchResultsItems.innerHTML = html;
 
     // Pan to the top result if it exists in the graph.
     if (DATA && nodeById[rows[0].id]) {
@@ -1639,7 +1849,7 @@ async function runSearch() {
     }
 
     // Clicking a result pans to that node and opens the detail panel.
-    searchResults.querySelectorAll('.search-result-item').forEach(el => {
+    searchResultsItems.querySelectorAll('.search-result-item').forEach(el => {
       el.addEventListener('click', () => {
         const id = el.dataset.id;
         if (DATA) {
@@ -1651,18 +1861,69 @@ async function runSearch() {
     });
 
   } catch (err) {
-    searchResults.innerHTML = `<p class="search-empty" style="color:var(--red)">Error: ${esc(err.message)}</p>`;
+    searchResultsItems.innerHTML = `<p class="search-empty" style="color:var(--red)">Error: ${esc(err.message)}</p>`;
   } finally {
-    searchSubmit.disabled = false;
+    searchSubmit.disabled = !searchInput.value.trim();
   }
 }
 
-searchSubmit.addEventListener('click', runSearch);
-searchClear.addEventListener('click', clearSearch);
+searchSubmit.addEventListener('click', () => {
+  if (surfaceMode === 'search') runSearch();
+});
 searchInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') runSearch();
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    updateSurfaceMode(surfaceMode === 'search' ? 'store' : 'search');
+  }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (surfaceMode === 'search') runSearch();
+    else captureThought();
+  }
   if (e.key === 'Escape') clearSearch();
 });
+searchInput.addEventListener('input', () => {
+  searchInput.style.height = 'auto';
+  searchInput.style.height = Math.min(searchInput.scrollHeight, 120) + 'px';
+  searchSubmit.disabled = !searchInput.value.trim();
+});
+
+async function captureThought() {
+  const content = searchInput.value.trim();
+  if (!content) return;
+  searchSubmit.disabled = true;
+  try {
+    const token = new URLSearchParams(location.search).get('token') || '';
+    const response = await fetch('/api/capture' + (token ? '?token=' + encodeURIComponent(token) : ''), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    searchInput.value = '';
+    searchInput.style.height = 'auto';
+    await loadData(true);
+  } catch (err) {
+    searchResultsItems.innerHTML = `<p class="search-empty" style="color:var(--red)">Error: ${esc(err.message)}</p>`;
+  } finally {
+    searchSubmit.disabled = !searchInput.value.trim();
+  }
+}
+
+function toggleSettings() {
+  const collapsed = settingsPanelEl.classList.toggle('collapsed');
+  toggleSettingsBtn.style.display = collapsed ? 'flex' : 'none';
+}
+
+toggleSettingsBtn.addEventListener('click', toggleSettings);
+closeSettingsBtn.addEventListener('click', () => {
+  settingsPanelEl.classList.add('collapsed');
+  toggleSettingsBtn.style.display = 'flex';
+});
+
+updateSurfaceMode(surfaceMode);
+setSearchStrategy(searchStrategy);
+searchSubmit.disabled = true;
 
 // ── state overlay ─────────────────────────────────────────────────────────────
 const overlay = document.getElementById('state-overlay');
@@ -1769,6 +2030,10 @@ async function loadData(preserveState) {
 }
 
 window.addEventListener('resize', resize);
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(() => resize());
+  ro.observe(wrap);
+}
 checkVizStatusAndLoad();
 })();
 </script>
