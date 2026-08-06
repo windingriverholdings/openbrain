@@ -654,7 +654,7 @@
 <header>
   <span aria-hidden="true">🧠</span>
   <h1>Brain Map</h1>
-  <a href="/" class="back-link">← Chat</a>
+  <a href="/" id="back-to-chat" class="back-link">← Chat</a>
   <span class="header-stats" id="header-stats"></span>
 </header>
 
@@ -669,7 +669,7 @@
   <div class="sep"></div>
   <button class="btn" id="btn-reset" title="Double-click canvas to reset too">Reset view</button>
   <div class="sep"></div>
-  <button class="btn" id="btn-rebuild" title="Re-run build-brain-viz.py to regenerate brain.json">Rebuild map</button>
+  <button class="btn" id="btn-rebuild" title="Run the map projection now to generate a new brain.json">Generate new map</button>
   <div class="sep"></div>
   <div class="timeline-wrap" id="timeline-wrap" style="display:none">
     <span style="font-size:0.75rem;color:var(--text-dim)">Timeline</span>
@@ -1102,21 +1102,11 @@ document.getElementById('btn-timeline-reset').addEventListener('click', () => {
   scheduleRender();
 });
 
-// ── brain-map auto-generate: status polling, progress bar, trigger ─────────────
+// ── brain-map generation: status polling, progress bar, explicit trigger ──────
 //
-// On load, checkVizStatusAndLoad() consults GET /api/rebuild-viz/status and
-// branches per the plan's missing/fresh/stale table (see
-// plan-2-auto-generate-brain-map/plan.md, "Frontend branch table"):
-//   - missing (exists:false): block full-screen with a determinate bar, POST
-//     (unless a build is already running), poll to done, then loadData().
-//   - fresh (exists:true, !stale, not running): plain loadData(), no trigger.
-//   - stale or a build already running (exists:true, stale:true or
-//     state:running): serve the existing map immediately, POST in the
-//     background (skip if already running), corner progress indicator,
-//     poll to done, loadData() again to swap in the fresh map.
-// The existing manual "Rebuild map" button rides the same trigger + poll +
-// bar path (previously it awaited a synchronous 200, which the backend no
-// longer returns).
+// Opening the map only loads the latest available brain.json snapshot. The
+// projection is expensive, so missing and stale snapshots are never generated
+// automatically. A new projection starts only from the button below.
 
 const vizProgressWrap   = document.getElementById('viz-progress-wrap');
 const vizProgressBar    = document.getElementById('viz-progress-bar');
@@ -1153,6 +1143,10 @@ function tokenQS() {
   const token = new URLSearchParams(location.search).get('token') || '';
   return token ? '?token=' + encodeURIComponent(token) : '';
 }
+
+// Keep the web auth token when navigating back to chat.
+const backToChat = document.getElementById('back-to-chat');
+if (backToChat) backToChat.href = '/' + location.search;
 
 async function fetchVizStatus() {
   const res = await fetch('/api/rebuild-viz/status' + tokenQS());
@@ -1204,13 +1198,13 @@ function showBlockingProgress() {
 }
 
 // Never leaves the bar stuck below 100: the progress bar is hidden and the
-// error points the user at the always-visible manual "Rebuild map" button
+// error points the user at the always-visible manual "Generate new map" button
 // (in the controls bar, unaffected by the overlay) as the retry path.
 function showBlockingError(message) {
   vizProgressWrap.classList.add('hidden');
   stateMsg.innerHTML =
     'Failed to build brain map: ' + esc(message) + '<br>' +
-    'Click <strong>Rebuild map</strong> above to retry.';
+    'Click <strong>Generate new map</strong> above to retry.';
   overlay.classList.remove('hidden');
   announceViz('Brain map build failed: ' + message);
 }
@@ -1230,7 +1224,7 @@ function hideRefreshIndicator() {
 function showRefreshError(message) {
   refreshIndicatorFill.style.width = '0%';
   refreshIndicatorLabel.innerHTML =
-    'Refresh failed: ' + esc(message) + '<br>Click Rebuild map to retry.';
+    'Generation failed: ' + esc(message) + '<br>Click Generate new map to retry.';
   refreshDismissBtn.classList.remove('hidden');
   announceViz('Brain map refresh failed: ' + message);
 }
@@ -1300,15 +1294,8 @@ function pollVizStatus({ onProgress, onDone, onError }) {
   tick();
 }
 
-// Single-flight guard shared by EVERY viz trigger entry point: the page-load
-// auto build, the page-load auto background refresh, and the manual
-// "Rebuild map" button. At most one poll session (and one outstanding
-// rebuild POST) is ever active. A second trigger while one is in flight is a
-// no-op here: the active session already covers it, and disabling
-// rebuildBtn for the duration means the button itself can't fire a second
-// click while an auto-triggered session owns the button. Returns false when
-// a session is already active so the caller can bail without starting a
-// second one.
+// Single-flight guard for explicit viz generation. At most one poll session
+// (and one outstanding rebuild POST) is ever active.
 function beginVizSession(busyText) {
   if (vizSessionActive) return false;
   vizSessionActive = true;
@@ -1320,7 +1307,7 @@ function beginVizSession(busyText) {
 function endVizSession() {
   vizSessionActive = false;
   rebuildBtn.disabled = false;
-  rebuildBtn.textContent = 'Rebuild map';
+  rebuildBtn.textContent = 'Generate new map';
 }
 
 // Degraded builds are still valid (heuristic labels only, Ollama was
@@ -1336,145 +1323,39 @@ function noteDegraded() {
   el.dataset.degradedNoted = '1';
 }
 
-// preserveState: true for a silent background refresh, where the user's
-// active type filter and timeline window should survive the data swap. See
-// loadData() for the reset-vs-preserve rules this flag drives.
+// preserveState: true for callers that want the user's active type filter and
+// timeline window to survive a data swap. See loadData() for the rules.
 async function finishVizLoad(status, preserveState) {
   await loadData(preserveState);
   if (status.degraded) noteDegraded();
 }
 
-// Blocking path: brain.json is missing, nothing usable to show yet.
-// This is the very first load for this browser session (DATA is still
-// null), so the fresh-default filter/timeline state finishVizLoad's plain
-// loadData(false) produces is correct: there is no prior user state to
-// preserve.
-async function runBlockingBuild(alreadyRunning) {
-  if (!beginVizSession(false)) return; // another session already owns this
-  showBlockingProgress();
-  try {
-    if (!alreadyRunning) await triggerVizRebuild();
-  } catch (err) {
-    try {
-      showBlockingError(err.message);
-    } finally {
-      endVizSession();
-    }
-    return;
-  }
-  // endVizSession() must not run until finishVizLoad() (and its /brain.json
-  // load) has settled: releasing the session guard any earlier lets a click
-  // landing in that gap start a second, concurrent loadData() against the
-  // same shared globals. The finally also guarantees release on a throw, so
-  // a failing showBlockingError/showRefreshError call can never wedge
-  // vizSessionActive true and leave rebuildBtn stuck disabled.
-  pollVizStatus({
-    onProgress: setVizProgress,
-    onDone: async (status) => {
-      try {
-        await finishVizLoad(status, false);
-      } finally {
-        endVizSession();
-      }
-    },
-    onError: (msg) => {
-      try {
-        showBlockingError(msg);
-      } finally {
-        endVizSession();
-      }
-    },
-  });
-}
-
-// Background path: a usable (if stale) map is already rendered by the
-// caller before this runs. Never blocks the current view. Silent: the user
-// didn't ask for this, so it must not clobber their active type filter or
-// timeline window: finishVizLoad(status, true) preserves and reapplies
-// them across the data swap.
-async function runBackgroundRefresh(alreadyRunning) {
-  if (!beginVizSession(false)) return; // another session already owns this
-  showRefreshIndicator();
-  try {
-    if (!alreadyRunning) await triggerVizRebuild();
-  } catch (err) {
-    try {
-      showRefreshError(err.message);
-    } finally {
-      endVizSession();
-    }
-    return;
-  }
-  // See runBlockingBuild's comment above pollVizStatus: endVizSession() is
-  // deferred to after finishVizLoad() settles, in a finally, for the same
-  // concurrent-load and wedge reasons.
-  pollVizStatus({
-    onProgress: setVizProgress,
-    onDone: async (status) => {
-      try {
-        hideRefreshIndicator();
-        await finishVizLoad(status, true);
-      } finally {
-        endVizSession();
-      }
-    },
-    onError: (msg) => {
-      try {
-        showRefreshError(msg);
-      } finally {
-        endVizSession();
-      }
-    },
-  });
-}
-
-// Entry point, called on page load in place of a bare loadData().
+// Entry point, called on page load. Status is informational only and must not
+// trigger a projection.
 async function checkVizStatusAndLoad() {
   let status;
   try {
     status = await fetchVizStatus();
   } catch (err) {
-    // Status endpoint itself unreachable. Log it (this used to be swallowed
-    // entirely) and fall back to a plain data load so a status-endpoint
-    // hiccup doesn't block an otherwise-servable map.
+    // Status is auxiliary to loading the snapshot. A status-endpoint hiccup
+    // must not block an otherwise-servable map or start a build.
     console.error('brain-map: status check failed, falling back to a plain data load:', err);
     await loadData();
     return;
   }
 
-  const running = status.state === 'running';
-
-  if (!status.exists) {
-    // The map has never been built. If the *last* build attempt already
-    // failed (possibly after running the full 5-minute ceiling), don't
-    // silently re-trigger another one on every page load: that's a reload
-    // storm against a build that just failed. Show the last error and let
-    // the user retry explicitly via the always-visible "Rebuild map" button.
-    if (status.state === 'error') {
-      showBlockingError(status.error || 'The last brain map build failed.');
-      return;
-    }
-    await runBlockingBuild(running);
-    return;
-  }
-
   await loadData();
   if (status.degraded) noteDegraded();
-
-  if (running || status.stale) {
-    await runBackgroundRefresh(running);
-  }
 }
 
-// Manual "Rebuild map" button: rides the same async trigger + poll + bar
-// path as the auto-triggers (the backend endpoint is async now, so the old
-// synchronous-200 await no longer matches its contract). Goes through the
-// same beginVizSession/endVizSession single-flight guard as the auto paths,
-// so a click that somehow lands while an auto-triggered session is already
-// running (rebuildBtn is disabled for that session's duration, so this is
-// belt-and-suspenders) joins rather than spawning a second poll loop.
+// Manual "Generate new map" button: the only page action that triggers the
+// async projection + poll + progress path. Goes through the same single-flight
+// guard,
+// so a click that somehow lands while another explicit session is already
+// running (rebuildBtn is disabled for that session's duration) cannot spawn a
+// second poll loop.
 rebuildBtn.addEventListener('click', async function() {
-  if (!beginVizSession('Rebuilding…')) return;
+  if (!beginVizSession('Generating…')) return;
   showRefreshIndicator();
   try {
     await triggerVizRebuild();
@@ -1486,9 +1367,8 @@ rebuildBtn.addEventListener('click', async function() {
     }
     return;
   }
-  // See runBlockingBuild's comment above pollVizStatus: endVizSession() is
-  // deferred to after finishVizLoad() settles, in a finally, for the same
-  // concurrent-load and wedge reasons.
+  // Keep the session active until the new snapshot has loaded so another
+  // click cannot start a concurrent load against the shared map state.
   pollVizStatus({
     onProgress: setVizProgress,
     onDone: async (status) => {
@@ -1796,7 +1676,7 @@ function hideState() { overlay.classList.add('hidden'); }
 
 // ── load data ─────────────────────────────────────────────────────────────────
 // preserveState: true only for a silent background refresh (see
-// runBackgroundRefresh). When true, the caller's current activeTypes and
+// an explicit refresh). When true, the caller's current activeTypes and
 // timeline window survive the data swap instead of resetting to "all
 // types, full range": a background refresh is invisible to the user, so it
 // must not silently discard filters they set. hiddenClusters is ALWAYS
@@ -1828,8 +1708,7 @@ async function loadData(preserveState) {
     if (!DATA.nodes || DATA.nodes.length === 0) {
       showState(
         'No brain map data yet.<br>' +
-        'Run <code>make viz</code> from the repo root to generate it,<br>' +
-        'then rebuild and restart the server.'
+      'Click <strong>Generate new map</strong> above to create one.'
       );
       return;
     }
@@ -1884,7 +1763,7 @@ async function loadData(preserveState) {
   } catch (err) {
     showState(
       `Failed to load brain.json: ${esc(err.message)}<br>` +
-      'Run <code>make viz</code> and rebuild the server.'
+      'Click <strong>Generate new map</strong> above to retry.'
     );
   }
 }

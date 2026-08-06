@@ -1,7 +1,8 @@
 """Simple intent detection for natural language input.
 
 Classifies a message into an OpenBrain action without requiring an LLM.
-Covers the common patterns; anything unrecognised falls back to capture.
+    Covers the common patterns; likely search phrases are marked ambiguous
+    instead of being silently captured.
 
 # TODO(tailscale): If exposing over the network, add rate limiting here.
 # TODO(llm): Replace regex intent matching with a local LLM classifier
@@ -24,6 +25,7 @@ class Intent(Enum):
     SUPERSEDE = "supersede"
     EXTRACT = "extract"
     RELOAD = "reload"
+    AMBIGUOUS = "ambiguous"
 
 
 @dataclass
@@ -36,13 +38,15 @@ class ParsedIntent:
 
 
 _SEARCH_PATTERNS = re.compile(
-    r"^(search|find|look up|what do i know about|recall|remember|remind me|"
-    r"have i (thought|noted|written) about|show me|retrieve|query)[:\s]+",
+    r"^(search|find|look up|look for|what do i know about|recall|remind me|"
+    r"have i (thought|noted|written) about|show me|retrieve|query|"
+    r"notes? about|anything (about|on)|do i have (anything )?(about|on)|"
+    r"did i (note|write|save))[:\s]+",
     re.IGNORECASE,
 )
 
 _CAPTURE_PATTERNS = re.compile(
-    r"^(remember|save|capture|note|log|store|record|add|write down|"
+    r"^(remember|save|capture|note\b|log|store|record|add|write down|"
     r"decided?|insight:|learning:|realised?|met |meeting with)[:\s]*",
     re.IGNORECASE,
 )
@@ -153,7 +157,8 @@ def parse(message: str) -> ParsedIntent:
             thought_type=_infer_type(content),
         )
 
-    # Default: try to capture anything that looks like a statement
+    # Default: questions search, long text is extracted, and short statements
+    # are ambiguous so the caller can choose rather than silently writing.
     # Short questions fall back to search
     if msg.endswith("?") or msg.lower().startswith(("what", "who", "when", "where", "how", "why")):
         return ParsedIntent(intent=Intent.SEARCH, text=msg.rstrip("?"))
@@ -162,11 +167,21 @@ def parse(message: str) -> ParsedIntent:
     if len(msg) > DEEP_CAPTURE_THRESHOLD:
         return ParsedIntent(intent=Intent.EXTRACT, text=msg)
 
-    return ParsedIntent(
-        intent=Intent.CAPTURE,
-        text=msg,
-        thought_type=_infer_type(msg),
-    )
+    if _looks_ambiguous(msg):
+        return ParsedIntent(intent=Intent.AMBIGUOUS, text=msg, thought_type=_infer_type(msg))
+
+    return ParsedIntent(intent=Intent.CAPTURE, text=msg, thought_type=_infer_type(msg))
+
+
+def _looks_ambiguous(msg: str) -> bool:
+    """Identify short note-oriented phrases that need an explicit choice."""
+    if len(msg.split()) < 2:
+        return False
+    return re.search(
+        r"\b(note|notes|memory|memories|about|regarding|related)\b",
+        msg,
+        re.IGNORECASE,
+    ) is not None
 
 
 HELP_TEXT = """

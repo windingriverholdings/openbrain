@@ -326,7 +326,7 @@
   },
   {
     "input": "remember: the API rate limit",
-    "expected_intent": "search",
+    "expected_intent": "capture",
     "expected_text": "the API rate limit",
     "expected_thought_type": "note"
   },
@@ -368,7 +368,7 @@
   },
   {
     "input": "remember: the API rate limit is 1000 req/min",
-    "expected_intent": "search",
+    "expected_intent": "capture",
     "expected_text": "the API rate limit is 1000 req/min",
     "expected_thought_type": "note"
   },
@@ -568,6 +568,30 @@
     "input": "This is a medium-length statement that doesn't match any explicit patterns but is under 200 characters so it should default to capture.",
     "expected_intent": "capture",
     "expected_text": "This is a medium-length statement that doesn't match any explicit patterns but is under 200 characters so it should default to capture.",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "look for tent notes",
+    "expected_intent": "search",
+    "expected_text": "tent notes",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "notes about tent",
+    "expected_intent": "search",
+    "expected_text": "tent",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "anything on tents",
+    "expected_intent": "search",
+    "expected_text": "tents",
+    "expected_thought_type": "note"
+  },
+  {
+    "input": "tent notes",
+    "expected_intent": "ambiguous",
+    "expected_text": "tent notes",
     "expected_thought_type": "note"
   }
 ]

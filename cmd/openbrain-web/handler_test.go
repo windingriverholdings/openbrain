@@ -105,6 +105,15 @@ func TestWsResponse_JSONFields(t *testing.T) {
 	assert.Nil(t, raw["response"], "JSON must NOT have old 'response' field")
 }
 
+func TestWsResponse_AmbiguousFields(t *testing.T) {
+	data, err := json.Marshal(wsResponse{Content: "choose", Intent: "ambiguous", Ambiguous: true, Query: "tent notes"})
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+	assert.Equal(t, true, raw["ambiguous"])
+	assert.Equal(t, "tent notes", raw["query"])
+}
+
 func TestWsHandler_NoToken_AllowsConnection(t *testing.T) {
 	b := brain.New(nil, nil, nil)
 	upgrader := newUpgrader("")

@@ -19,6 +19,7 @@ const (
 	Supersede Intent = "supersede"
 	Extract   Intent = "extract"
 	Reload    Intent = "reload"
+	Ambiguous Intent = "ambiguous"
 )
 
 // ParsedIntent holds the classified intent and extracted content.
@@ -35,11 +36,13 @@ const DeepCaptureThreshold = 200
 
 var (
 	searchPatterns = regexp.MustCompile(
-		`(?i)^(search|find|look up|what do i know about|recall|remember|remind me|` +
-			`have i (thought|noted|written) about|show me|retrieve|query)[:\s]+`)
+		`(?i)^(search|find|look up|look for|what do i know about|recall|remind me|` +
+			`have i (thought|noted|written) about|show me|retrieve|query|` +
+			`notes? about|anything (about|on)|do i have (anything )?(about|on)|` +
+			`did i (note|write|save))[:\s]+`)
 
 	capturePatterns = regexp.MustCompile(
-		`(?i)^(remember|save|capture|note|log|store|record|add|write down|` +
+		`(?i)^(remember|save|capture|note\b|log|store|record|add|write down|` +
 			`decided?|insight:|learning:|realised?|met |meeting with)[:\s]*`)
 
 	decisionHint = regexp.MustCompile(
@@ -154,5 +157,30 @@ func Parse(message string) ParsedIntent {
 		return ParsedIntent{Intent: Extract, Text: msg, ThoughtType: "note"}
 	}
 
+	if looksAmbiguous(msg) {
+		return ParsedIntent{Intent: Ambiguous, Text: msg, ThoughtType: InferType(msg)}
+	}
+
 	return ParsedIntent{Intent: Capture, Text: msg, ThoughtType: InferType(msg)}
+}
+
+// looksAmbiguous identifies short, note-oriented phrases where silently
+// capturing is especially surprising. Ordinary statements continue to be
+// captured as before; the web UI asks for a choice only for likely search
+// phrases such as "tent notes" or "memories about camping".
+func looksAmbiguous(msg string) bool {
+	if len(strings.Fields(msg)) < 2 {
+		return false
+	}
+	terms := map[string]struct{}{
+		"note": {}, "notes": {}, "memory": {}, "memories": {},
+		"about": {}, "regarding": {}, "related": {},
+	}
+	for _, word := range strings.Fields(strings.ToLower(msg)) {
+		word = strings.Trim(word, ".,;:!?\"'()[]{}")
+		if _, ok := terms[word]; ok {
+			return true
+		}
+	}
+	return false
 }

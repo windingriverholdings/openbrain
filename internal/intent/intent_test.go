@@ -12,12 +12,12 @@ import (
 )
 
 type intentTestCase struct {
-	Input                string  `json:"input"`
-	ExpectedIntent       string  `json:"expected_intent"`
-	ExpectedText         string  `json:"expected_text"`
-	ExpectedThoughtType  string  `json:"expected_thought_type"`
-	ExpectedTags         []string `json:"expected_tags,omitempty"`
-	ExpectedSupersedeQ   *string `json:"expected_supersede_query,omitempty"`
+	Input               string   `json:"input"`
+	ExpectedIntent      string   `json:"expected_intent"`
+	ExpectedText        string   `json:"expected_text"`
+	ExpectedThoughtType string   `json:"expected_thought_type"`
+	ExpectedTags        []string `json:"expected_tags,omitempty"`
+	ExpectedSupersedeQ  *string  `json:"expected_supersede_query,omitempty"`
 }
 
 func testdataPath(name string) string {
@@ -52,6 +52,37 @@ func TestParse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSearchPhrasesAndAmbiguity(t *testing.T) {
+	cases := []struct {
+		input, intent, text string
+	}{
+		{"look for tent notes", "search", "tent notes"},
+		{"notes about tent", "search", "tent"},
+		{"anything on tents", "search", "tents"},
+		{"remember: the tent is in the garage", "capture", "the tent is in the garage"},
+		{"tent notes", "ambiguous", "tent notes"},
+	}
+	for _, tc := range cases {
+		got := Parse(tc.input)
+		assert.Equal(t, tc.intent, string(got.Intent), tc.input)
+		assert.Equal(t, tc.text, got.Text, tc.input)
+	}
+}
+
+func TestLooksAmbiguousUsesWholeWords(t *testing.T) {
+	for _, input := range []string{
+		"bought a new notebook today",
+		"the aboutface redesign shipped",
+		"relatedly the build is faster",
+		"memoryless cache is fine",
+	} {
+		assert.Equal(t, Capture, Parse(input).Intent, input)
+	}
+
+	assert.Equal(t, Ambiguous, Parse("tent notes.").Intent)
+	assert.Equal(t, Capture, Parse("notes").Intent)
 }
 
 type inferTypeTestCase struct {
