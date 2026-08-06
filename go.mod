@@ -10,7 +10,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1
-	github.com/mark3labs/mcp-go v0.56.0
+	github.com/mark3labs/mcp-go v0.57.0
 	github.com/otiai10/gosseract/v2 v2.4.1
 	github.com/stretchr/testify v1.11.1
 	github.com/windingriverholdings/wrs-llm v0.1.0
