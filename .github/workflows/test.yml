@@ -103,7 +103,7 @@ jobs:
       # state. ubuntu-latest already has gcc/build-essential, so cgo is
       # enabled by default for `-race`.
       - name: Set up Go (pinned 1.26.5)
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: '1.26.5'
           cache: false
