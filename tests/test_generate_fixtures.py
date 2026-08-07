@@ -40,27 +40,42 @@ def _load_module() -> Any:
 
 gen = _load_module()
 
+# Derived from the generator's own manifest, not hand-maintained here: a new
+# testdata/*.json file added to FIXTURE_MANIFEST is picked up automatically,
+# so a new generated file cannot slip past this suite the way a hardcoded
+# filename list could.
+_MANIFEST = gen.FIXTURE_MANIFEST
 
-_GENERATED_FILES = {
-    "intent_cases.json": lambda: gen.generate_intent_fixtures(),
-    "infer_type_cases.json": lambda: gen.generate_infer_type_fixtures(),
-    "extract_parse_cases.json": lambda: gen.generate_extract_parse_fixtures(),
-    "llm_routing_cases.json": lambda: gen.generate_llm_routing_fixtures(),
-}
+
+class TestFixtureManifestMatchesTestdataDirectory:
+    """The generator's manifest and testdata/'s actual *.json files must
+    name exactly the same set.
+
+    Closes the blind spot the byte-identical check below cannot see on its
+    own: a *.json file present on disk but missing from FIXTURE_MANIFEST
+    would never be regenerated or diffed by anything, so it could drift
+    forever with no test ever touching it. Equally, a manifest entry with no
+    file on disk means main() has never been run for it.
+    """
+
+    def test_manifest_keys_match_testdata_json_files_on_disk(self) -> None:
+        on_disk = {p.name for p in _TESTDATA.glob("*.json")}
+        assert set(_MANIFEST.keys()) == on_disk
 
 
 class TestGeneratedFixturesMatchCheckedInCopy:
-    """Every testdata/*.json file must be byte-identical to a fresh regen.
+    """Every file in the generator's manifest must be byte-identical to a
+    fresh regen.
 
     If this fails, the checked-in JSON was hand-edited (or a prior
     generator run was never committed): edit the generator's inputs list
     and regenerate via `make fixtures`, never hand-edit the JSON.
     """
 
-    @pytest.mark.parametrize("filename", sorted(_GENERATED_FILES))
+    @pytest.mark.parametrize("filename", sorted(_MANIFEST))
     def test_regenerated_output_matches_checked_in_file(self, filename: str) -> None:
         checked_in = (_TESTDATA / filename).read_text(encoding="utf-8")
-        fresh = json.dumps(_GENERATED_FILES[filename](), indent=2) + "\n"
+        fresh = json.dumps(_MANIFEST[filename](), indent=2) + "\n"
         assert fresh == checked_in, (
             f"testdata/{filename} does not match a fresh regen. "
             "Add the missing case to the generator's inputs list in "

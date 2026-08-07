@@ -163,8 +163,17 @@ jobs:
       - name: Regenerate fixtures
         run: pixi run -e dev python scripts/generate_fixtures.py
 
-      - name: Fail on fixture drift
-        run: git diff --exit-code testdata/
+      # `git diff --exit-code` alone only diffs TRACKED paths, so a generator
+      # that starts emitting a brand-new testdata/*.json file would pass this
+      # gate clean with the new file left untracked. `git add -N` (intent-to-
+      # add) stages every untracked path in testdata/ as an empty blob first,
+      # so git diff sees it as a full addition and the exit-code check catches
+      # it too. This never actually commits anything: the job container is
+      # discarded after the run.
+      - name: Fail on fixture drift (including new, untracked files)
+        run: |
+          git add -N testdata/
+          git diff --exit-code testdata/
 
       # pytest exits 5 when it collects zero tests. That is a real failure
       # condition here (a broken test path or config would otherwise report
