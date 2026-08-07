@@ -39,6 +39,17 @@ def _extract_subjects_simple(text: str, thought_type: str, tags: list[str]) -> l
 
 logger = structlog.get_logger(__name__)
 
+# AMBIGUOUS_PROMPT is the plain-text disambiguation reply dispatch() returns
+# for Intent.AMBIGUOUS. It mirrors the web UI's search/capture choice card
+# (cmd/openbrain-web/handler.go) and the Go AmbiguousPrompt constant
+# (internal/brain/brain.go) for channels that render plain text rather than an
+# interactive card: the CLI, Telegram, and Slack (the Python web UI itself
+# handles Intent.AMBIGUOUS the same way, since it has no choice-card surface).
+AMBIGUOUS_PROMPT = (
+    "That looks like it could be a search or a note to save. "
+    "Say `find: ...` to search, or `note: ...` to save it."
+)
+
 
 async def dispatch(parsed: ParsedIntent, source: str = "web") -> str:
     """Execute a parsed intent and return a human-readable response."""
@@ -56,6 +67,13 @@ async def dispatch(parsed: ParsedIntent, source: str = "web") -> str:
 
     if parsed.intent == Intent.SEARCH:
         return await _search(parsed.text)
+
+    if parsed.intent == Intent.AMBIGUOUS:
+        # Every caller of dispatch() (CLI, Telegram, Slack, the web UI's own
+        # backend) renders plain text here. Silently searching would discard
+        # a note the user meant to save; silently capturing would write a
+        # search query as a thought. Ask explicitly instead of guessing.
+        return AMBIGUOUS_PROMPT
 
     if parsed.intent == Intent.SUPERSEDE:
         return await _supersede(parsed, source)
