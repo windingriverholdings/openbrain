@@ -42,11 +42,22 @@ setup() {
 
   # The OPENBRAIN_DS_* overrides every cmd_apply/cmd_rollback test needs so
   # nothing reaches real systemd, real loginctl, or the real /etc.
+  #
+  # OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=1 here keeps every existing
+  # cmd_apply/cmd_rollback test at the prior single-shot health-check
+  # behavior (OB-086 added retry inside run_health_check; a curl plan with
+  # one line per intended outcome, as these tests already use, would
+  # otherwise be silently consumed across retry attempts within a SINGLE
+  # do_cutover call instead of representing separate cutover attempts). The
+  # dedicated retry-behavior tests below override both retry env vars
+  # per-test to exercise real multi-attempt retries.
   DS_ENV=(
     OPENBRAIN_DS_ENV_FILE="$ENV_FILE"
     OPENBRAIN_DS_USER_SYSTEMD_DIR="$USER_SYSTEMD_DIR"
     OPENBRAIN_DS_LOGINCTL="$FAKE_LOGINCTL"
     OPENBRAIN_DS_LINGER_USER=testuser
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=1
+    OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0
   )
 }
 
@@ -265,6 +276,25 @@ curl_plan() {
   local path="$1"
   shift
   printf '%s\n' "$@" > "$path"
+}
+
+# write_counting_probe writes a sourceable function (to a file the test
+# `source`s alongside deploy-system.sh) that fails on every call except the
+# NTH, so a retry_probe test can drive a "healthy eventually" race without
+# any real sleep or real service (OB-086).
+write_counting_probe() {
+  local path="$1" fn_name="$2" succeed_on_attempt="$3" fail_code="${4:-1}"
+  cat > "$path" <<EOF
+CALL_COUNT_FILE="\${CALL_COUNT_FILE:?CALL_COUNT_FILE must be set}"
+${fn_name}() {
+  local n=0
+  [[ -f "\$CALL_COUNT_FILE" ]] && n="\$(cat "\$CALL_COUNT_FILE")"
+  n=\$((n + 1))
+  echo "\$n" > "\$CALL_COUNT_FILE"
+  [[ "\$n" -ge ${succeed_on_attempt} ]] && return 0
+  return ${fail_code}
+}
+EOF
 }
 
 # write_user_unit_file drops a minimal fake --user unit file into dir, so
@@ -687,14 +717,19 @@ EOF
   curl_plan "${WORK_DIR}/local.plan" ok
   curl_plan "${WORK_DIR}/remote.plan" 200
   run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=1 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
     FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
     bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
   [ "$status" -eq 0 ]
 
+  # Single-shot here (attempts=1): the multi-attempt retry behavior itself
+  # (including that an UNREACHABLE result is retried too) has its own
+  # dedicated tests below.
   curl_plan "${WORK_DIR}/local2.plan" ok
   curl_plan "${WORK_DIR}/remote2.plan" unreachable
   run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=1 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
     FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local2.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local2.count" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote2.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote2.count" \
     bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
@@ -704,10 +739,151 @@ EOF
   curl_plan "${WORK_DIR}/local3.plan" fail
   curl_plan "${WORK_DIR}/remote3.plan" 200
   run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=1 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
     FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local3.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local3.count" \
     FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote3.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote3.count" \
     bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
   [ "$status" -eq 1 ]
+}
+
+# --- retry_probe (OB-086) -------------------------------------------------
+# A probe fired immediately after `systemctl restart` can race the app
+# binding its port; the deploy-system.sh header comment and OB-086 field
+# report (a real apply's cutover health check, and its automatic rollback's
+# own verification check, both failed against a service that was healthy
+# seconds later) are what these tests protect against.
+
+@test "retry_probe returns immediately on first-attempt success, no sleep, exactly one call" {
+  local probe_file="${WORK_DIR}/probe.sh"
+  local count_file="${WORK_DIR}/count"
+  write_counting_probe "$probe_file" always_ok 1
+
+  # interval_seconds=99 would make the test hang for real if a sleep were
+  # ever reached; first-attempt success must never sleep.
+  run env CALL_COUNT_FILE="$count_file" timeout 5 bash -c "
+    source '$probe_file'
+    source '$SCRIPT'
+    retry_probe always_ok 5 99
+  "
+  [ "$status" -eq 0 ]
+  [ "$(cat "$count_file")" = "1" ]
+}
+
+@test "retry_probe retries until the Nth attempt succeeds, then stops (no further calls, no trailing sleep)" {
+  local probe_file="${WORK_DIR}/probe.sh"
+  local count_file="${WORK_DIR}/count"
+  write_counting_probe "$probe_file" ok_on_third 3
+
+  run env CALL_COUNT_FILE="$count_file" timeout 5 bash -c "
+    source '$probe_file'
+    source '$SCRIPT'
+    retry_probe ok_on_third 5 0
+  "
+  [ "$status" -eq 0 ]
+  [ "$(cat "$count_file")" = "3" ]
+  [[ "$output" == *"attempt 1 of 5"* ]]
+  [[ "$output" == *"attempt 2 of 5"* ]]
+  [[ "$output" != *"attempt 3 of 5"* ]]
+}
+
+@test "retry_probe exhausts the attempt budget and returns the LAST attempt's own exit code unchanged" {
+  local probe_file="${WORK_DIR}/probe.sh"
+  local count_file="${WORK_DIR}/count"
+  # succeed_on_attempt=99 (never within budget); fail_code=3, an arbitrary
+  # non-1 code, to prove retry_probe propagates the real exit code rather
+  # than collapsing every failure to 1.
+  write_counting_probe "$probe_file" never_ok 99 3
+
+  run env CALL_COUNT_FILE="$count_file" timeout 5 bash -c "
+    source '$probe_file'
+    source '$SCRIPT'
+    retry_probe never_ok 3 0
+  "
+  [ "$status" -eq 3 ]
+  [ "$(cat "$count_file")" = "3" ]
+  [[ "$output" == *"attempt 1 of 3"* ]]
+  [[ "$output" == *"attempt 2 of 3"* ]]
+  [[ "$output" == *"attempt 3 of 3"* ]]
+}
+
+# --- run_health_check retry wiring (OB-086) -------------------------------
+# Exercises retry_probe through the real health_check_local/health_check_remote
+# contracts and the write_fake_curl plan/counter mock, so the assertions
+# below are on the ACTUAL probe attempt count the mock observed, not just on
+# run_health_check's final status.
+
+@test "run_health_check retries the local probe and passes once the plan reports healthy on a later attempt" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+
+  curl_plan "${WORK_DIR}/local.plan" fail fail ok
+  curl_plan "${WORK_DIR}/remote.plan" 200
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=5 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 0 ]
+  [ "$(cat "${WORK_DIR}/local.count")" = "3" ]
+  [[ "$output" == *"attempt 1 of 5"* ]]
+  [[ "$output" == *"attempt 2 of 5"* ]]
+}
+
+@test "run_health_check exhausts local retries at the configured budget and returns HEALTH_FAIL (never-healthy service)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+
+  # A single "fail" line: write_fake_curl repeats the last plan line for any
+  # call past the plan's length, modeling a service that never becomes
+  # healthy (a realistic curl-failure body, not a crafted one-shot fixture).
+  curl_plan "${WORK_DIR}/local.plan" fail
+  curl_plan "${WORK_DIR}/remote.plan" 200
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=3 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 1 ]
+  [ "$(cat "${WORK_DIR}/local.count")" = "3" ]
+  [[ "$output" == *"attempt 3 of 3"* ]]
+  [[ "$output" == *"local health check failed after 3 attempt(s)"* ]]
+  # Never falls through to the remote tier once the local tier is exhausted.
+  [ ! -f "${WORK_DIR}/remote.count" ]
+}
+
+@test "run_health_check retries the remote probe too and passes once it reports 200 on a later attempt" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+
+  curl_plan "${WORK_DIR}/local.plan" ok
+  curl_plan "${WORK_DIR}/remote.plan" unreachable unreachable 200
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=5 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 0 ]
+  [ "$(cat "${WORK_DIR}/remote.count")" = "3" ]
+}
+
+@test "run_health_check exhausts remote retries at the configured budget and still reports UNREACHABLE, not a genuine failure" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+
+  curl_plan "${WORK_DIR}/local.plan" ok
+  curl_plan "${WORK_DIR}/remote.plan" unreachable
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=3 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 2 ]
+  [ "$(cat "${WORK_DIR}/remote.count")" = "3" ]
+  [[ "$output" == *"not a genuine failure"* ]]
 }
 
 # --- current_installed_version --------------------------------------------
@@ -946,6 +1122,80 @@ EOF
   [ "$mtime_before" = "$mtime_after" ]
 }
 
+@test "cmd_apply's cutover survives a local health-check race and succeeds once retried (exit 0)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_sudo "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+
+  # The first attempt races the restart (as in the OB-086 field report); the
+  # second attempt reports healthy. DS_ENV's ATTEMPTS=1 default is overridden
+  # here so the retry actually has a budget to work with.
+  curl_plan "${WORK_DIR}/local.plan" fail ok
+  curl_plan "${WORK_DIR}/remote.plan" 200
+
+  run env "${DS_ENV[@]}" OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=3 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    PATH="$fake_bin:$PATH" OPENBRAIN_DS_EUID=0 \
+    OPENBRAIN_DS_INSTALL_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_DS_SYSTEMD_DIR='${SYSTEMD_DIR}'
+      cmd_apply v0.8.0
+    "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"version 'v0.8.0' is live and healthy"* ]]
+  [ "$(cat "${WORK_DIR}/local.count")" = "2" ]
+  # Only one restart: the retry re-ran the probe, never the restart itself.
+  [ "$(grep -c '^restart openbrain-web.service$' "$systemctl_log")" -eq 1 ]
+}
+
+@test "cmd_apply's automatic rollback-to-previous-version cutover also retries its own health check before declaring recovery (exit 10)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_sudo "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+
+  env OPENBRAIN_REPO=windingriverholdings/openbrain OPENBRAIN_INSTALL_DIR="$INSTALL_DIR" "$installer" v0.7.0
+
+  # ATTEMPTS=2: the FIRST cutover (v0.8.0) fails both attempts and exhausts
+  # (matching the OB-086 field report's "cutover FAILED" leg), triggering
+  # the automatic rollback; the SECOND cutover (v0.7.0, the rollback itself)
+  # fails once then recovers on retry (the field report's "rollback ALSO
+  # failed its health check" leg, but this time the retry catches it).
+  curl_plan "${WORK_DIR}/local.plan" fail fail fail ok
+  curl_plan "${WORK_DIR}/remote.plan" 200
+
+  run env "${DS_ENV[@]}" OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=2 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    PATH="$fake_bin:$PATH" OPENBRAIN_DS_EUID=0 \
+    OPENBRAIN_DS_INSTALL_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_DS_SYSTEMD_DIR='${SYSTEMD_DIR}'
+      cmd_apply v0.8.0
+    "
+  [ "$status" -eq 10 ]
+  [[ "$output" == *"automatic rollback to 'v0.7.0' succeeded"* ]]
+  # 2 attempts to exhaust the first cutover, 2 more (fail then ok) for the
+  # rollback cutover's own retry: 4 total local probe calls.
+  [ "$(cat "${WORK_DIR}/local.count")" = "4" ]
+}
+
 @test "cmd_apply automatically rolls back to the previous version on a genuine health-check failure and recovers (exit 10)" {
   local fake_bin="${WORK_DIR}/fakebin"
   mkdir -p "$fake_bin"
@@ -1124,6 +1374,40 @@ EOF
   [[ "$output" == *"version 'v0.6.0' is live and healthy"* ]]
   run cat "$installer_log"
   [ "$output" = "windingriverholdings/openbrain|${INSTALL_DIR}|v0.6.0" ]
+}
+
+@test "cmd_rollback's on-demand cutover survives a local health-check race and succeeds once retried (exit 0)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_sudo "$fake_bin"
+  local systemctl_log="${WORK_DIR}/systemctl.log"
+  write_fake_systemctl "$fake_bin" "$systemctl_log"
+  write_fake_curl "$fake_bin"
+  local installer="${WORK_DIR}/fake-install-release.sh"
+  local installer_log="${WORK_DIR}/installer.log"
+  write_fake_install_release "$installer" "$installer_log"
+
+  # As in the OB-086 field report: the on-demand rollback's own health-check
+  # verification failed against a service that had already restarted and
+  # was serving seconds later.
+  curl_plan "${WORK_DIR}/local.plan" fail ok
+  curl_plan "${WORK_DIR}/remote.plan" 200
+
+  run env "${DS_ENV[@]}" OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=3 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    PATH="$fake_bin:$PATH" OPENBRAIN_DS_EUID=0 \
+    OPENBRAIN_DS_INSTALL_SCRIPT="$installer" \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "
+      source '$SCRIPT'
+      OPENBRAIN_INSTALL_DIR='${INSTALL_DIR}'
+      OPENBRAIN_DS_SYSTEMD_DIR='${SYSTEMD_DIR}'
+      cmd_rollback v0.6.0
+    "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"version 'v0.6.0' is live and healthy"* ]]
+  [ "$(cat "${WORK_DIR}/local.count")" = "2" ]
+  [ "$(grep -c '^restart openbrain-web.service$' "$systemctl_log")" -eq 1 ]
 }
 
 @test "cmd_rollback aborts before any unit change when install of the requested version fails (exit 3)" {
