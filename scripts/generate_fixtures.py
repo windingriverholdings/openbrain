@@ -4,6 +4,13 @@
 Runs intent.parse(), extract._parse_extraction_response(), and
 llm._needs_primary_model() against comprehensive inputs, dumping
 results to testdata/*.json for Go test consumption.
+
+The files under testdata/ are GENERATED OUTPUT: never hand-edit them.
+A hand edit adds a case to the JSON without adding the matching input
+to this script, so the next `make fixtures` regen silently deletes it
+(see OB-079). To add or change a case, edit the relevant `inputs` list
+in this script, then run `make fixtures` (or `pixi run -e dev python
+scripts/generate_fixtures.py`) and commit the regenerated JSON.
 """
 
 import json
@@ -138,6 +145,12 @@ def generate_intent_fixtures():
         "a",
         "Hello",
         "This is a medium-length statement that doesn't match any explicit patterns but is under 200 characters so it should default to capture.",
+
+        # === SEARCH / AMBIGUOUS (tent regression, PR #69) ===
+        "look for tent notes",
+        "notes about tent",
+        "anything on tents",
+        "tent notes",
     ]
 
     fixtures = []
