@@ -165,13 +165,22 @@ download_via_curl() {
   # visible to other local users via `ps`, a bearer token must not be. The
   # RETURN trap cleans the header file up on every exit path of this
   # function, not just the happy one.
+  #
+  # A RETURN trap is not scoped to the function that set it: once armed it
+  # stays active and fires again on every later function return, including
+  # the CALLER's. Since the trap body references header_file by name, that
+  # later firing (with header_file already out of the local scope that
+  # declared it) aborts under set -u with "header_file: unbound variable"
+  # (OB-084). The `trap - RETURN` appended to the trap body disarms it
+  # immediately after this function's own return fires it once, so it never
+  # fires again for a caller's return.
   local header_file=""
   if [[ -n "$token" ]]; then
     header_file="$(mktemp)"
     chmod 600 "$header_file"
     printf 'Authorization: token %s\n' "$token" > "$header_file"
   fi
-  trap '[[ -n "$header_file" ]] && rm -f "$header_file"' RETURN
+  trap '[[ -n "$header_file" ]] && rm -f "$header_file"; trap - RETURN' RETURN
 
   for asset in "${assets[@]}"; do
     url="https://github.com/${repo}/releases/download/${version}/${asset}"
