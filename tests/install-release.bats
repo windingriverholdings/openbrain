@@ -472,6 +472,88 @@ EOF
   [ -f "$marker" ]
 }
 
+# --- OB-084: RETURN trap scoping in download_via_curl's curl fallback -----
+#
+# download_via_curl sets a RETURN trap to clean up a temp Authorization
+# header file. A RETURN trap registered inside a function is not scoped to
+# that function: once armed, it stays active and fires again on every later
+# function return, including the CALLER's. Because the trap body references
+# the local variable header_file by name (not a value baked in at
+# registration time), firing again after download_via_curl has already
+# returned finds header_file out of scope, and set -u aborts the whole
+# script with "header_file: unbound variable". This reproduces the failure
+# through download_release (the real caller), the code path
+# scripts/install-release.sh actually exercises when gh is unavailable or
+# unauthenticated, for example under sudo where env_reset drops the gh
+# keyring session.
+
+# write_fake_curl_writes_dest writes a stub curl that, for any invocation
+# carrying `-o <dest>`, writes fixed bytes to dest and exits 0. Matches the
+# `curl -fsSL -o "${scratch_dir}/${asset}" "$url"` call shape download_via_curl
+# uses for its primary (unauthenticated) download attempt.
+write_fake_curl_writes_dest() {
+  local dir="$1"
+  cat > "${dir}/curl" <<'EOF'
+#!/usr/bin/env bash
+out=""
+for ((i = 1; i <= $#; i++)); do
+  if [[ "${!i}" == "-o" ]]; then
+    j=$((i + 1))
+    out="${!j}"
+  fi
+done
+if [[ -n "$out" ]]; then
+  echo "fake-asset-bytes" > "$out"
+fi
+exit 0
+EOF
+  chmod +x "${dir}/curl"
+}
+
+@test "download_via_curl's RETURN trap does not fire again when its caller download_release returns" {
+  local fake_bin="${WORK_DIR}/fakebin-curl-only"
+  mkdir -p "$fake_bin"
+  # No gh on PATH: have_gh_auth fails immediately, forcing the same curl
+  # fallback download_release takes in production under sudo.
+  ln -s "$(command -v bash)" "${fake_bin}/bash"
+  write_fake_curl_writes_dest "$fake_bin"
+
+  local scratch_dir="${WORK_DIR}/scratch"
+  mkdir -p "$scratch_dir"
+
+  run env PATH="$fake_bin" bash -c "
+    source '$SCRIPT'
+    download_release 'owner/repo' 'v9.9.9' '${scratch_dir}' 'some-asset'
+    echo AFTER_DOWNLOAD_RELEASE_RETURNED
+  "
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"unbound variable"* ]]
+  [[ "$output" == *"AFTER_DOWNLOAD_RELEASE_RETURNED"* ]]
+  [ -f "${scratch_dir}/some-asset" ]
+}
+
+@test "download_via_curl still cleans up its Authorization header temp file after a successful call" {
+  local fake_bin="${WORK_DIR}/fakebin-curl-token"
+  mkdir -p "$fake_bin"
+  ln -s "$(command -v bash)" "${fake_bin}/bash"
+  write_fake_curl_writes_dest "$fake_bin"
+
+  local scratch_dir="${WORK_DIR}/scratch"
+  mkdir -p "$scratch_dir"
+  local tmpdir="${WORK_DIR}/tmpdir"
+  mkdir -p "$tmpdir"
+
+  run env PATH="${fake_bin}:${PATH}" TMPDIR="$tmpdir" GH_TOKEN=dummy-token bash -c "
+    source '$SCRIPT'
+    download_via_curl 'owner/repo' 'v9.9.9' '${scratch_dir}' 'some-asset'
+  "
+  [ "$status" -eq 0 ]
+
+  run bash -c "ls -A '$tmpdir'"
+  [ -z "$output" ]
+}
+
 @test "atomic_install fails closed with a distinct message when the final rename fails, and leaves the prior binary in place" {
   make_fixture_set "$WORK_DIR" v9.9.9
   local install_dir="${WORK_DIR}/install"
