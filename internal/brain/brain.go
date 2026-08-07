@@ -109,6 +109,12 @@ func (b *Brain) SetStoreFnForTesting(
 	}
 }
 
+// AmbiguousPrompt is the plain-text disambiguation reply Dispatch returns for
+// intent.Ambiguous. It mirrors the wording of the web UI's search/capture
+// choice card (cmd/openbrain-web/handler.go) for callers that render plain
+// text rather than an interactive card: the CLI, Telegram, and Slack.
+const AmbiguousPrompt = "That looks like it could be a search or a note to save. Say `find: ...` to search, or `note: ...` to save it."
+
 // Dispatch routes a parsed intent to the appropriate handler.
 func (b *Brain) Dispatch(ctx context.Context, parsed intent.ParsedIntent, source string) (string, error) {
 	switch parsed.Intent {
@@ -123,10 +129,14 @@ func (b *Brain) Dispatch(ctx context.Context, parsed intent.ParsedIntent, source
 	case intent.Search:
 		return b.formatSearch(ctx, parsed.Text, SearchOpts{Mode: "hybrid"})
 	case intent.Ambiguous:
-		// Non-interactive callers cannot ask the user to choose. Search is
-		// the safe default because it is read-only; the web UI presents the
-		// explicit capture/search choice instead.
-		return b.formatSearch(ctx, parsed.Text, SearchOpts{Mode: "hybrid"})
+		// The web UI never reaches this branch: its websocket handler
+		// intercepts intent.Ambiguous before calling Dispatch and shows an
+		// interactive search/capture choice card instead. Every other
+		// Dispatch caller (CLI, Telegram, Slack) has no way to present that
+		// choice, so guessing either direction is wrong: silently searching
+		// discards a note the user meant to save, and silently capturing
+		// writes a search query as a thought. Ask explicitly instead.
+		return AmbiguousPrompt, nil
 	case intent.Supersede:
 		return b.Supersede(ctx, parsed, source)
 	case intent.Extract:
