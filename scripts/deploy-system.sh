@@ -88,7 +88,15 @@
 #   8. Runs the two-tier health check: local http://127.0.0.1:10203/health
 #      (a JSON body carrying "status":"ok"), then, only if local passes, an
 #      AUTHENTICATED remote https://openbrain.wr-s.net/mcp `initialize` POST
-#      (bearer token read from the EnvironmentFile) expecting HTTP 200. A
+#      (bearer token read from the EnvironmentFile) expecting HTTP 200. Each
+#      tier is retried with a bounded budget (OB-086; see
+#      OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS / _INTERVAL below): a probe fired
+#      immediately after `systemctl restart` can race the app binding its
+#      port, and a single-shot check false-triggered a rollback (and the
+#      rollback's own verification probe) while the service was still
+#      starting. The retry only re-runs the read-only probe, never the
+#      restart or any other state-mutating step, and a genuinely dead or
+#      never-healthy service still fails once the budget is exhausted. A
 #      remote connection failure (unreachable, not a genuine HTTP failure) is
 #      treated as "cannot confirm, not a rollback trigger" per the
 #      boundary-of-the-boundary discipline: a cloudflared outage is not the
@@ -181,6 +189,14 @@
 #                                     http://127.0.0.1:10203/health
 #   OPENBRAIN_DS_HEALTH_REMOTE_URL   Remote MCP endpoint, default
 #                                     https://openbrain.wr-s.net/mcp
+#   OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS  Bounded retry budget for each health
+#                                     probe tier (local, then remote), default
+#                                     5. Matches the deploy runbook's cutover
+#                                     discipline (OB-086); tests override this
+#                                     to keep the retry loop short.
+#   OPENBRAIN_DS_HEALTH_RETRY_INTERVAL  Seconds slept between failed health
+#                                     probe attempts, default 10. No sleep
+#                                     follows the final attempt.
 #   OPENBRAIN_DS_INSTALL_SCRIPT      Path to the Phase 2 installer, default
 #                                     scripts/install-release.sh next to
 #                                     this file
@@ -229,6 +245,13 @@ OPENBRAIN_DS_EUID="${OPENBRAIN_DS_EUID:-$EUID}"
 # misbehaving previous binary cannot hang a cutover or rollback
 # indefinitely.
 OPENBRAIN_DS_VERSION_CHECK_TIMEOUT="${OPENBRAIN_DS_VERSION_CHECK_TIMEOUT:-5}"
+# Bounded retry budget for run_health_check's local and remote probes
+# (OB-086): a probe fired immediately after `systemctl restart` can race the
+# app binding its port. Defaults match the deploy runbook's cutover
+# discipline (5 attempts, 10s apart); tests override both to keep the retry
+# loop fast and deterministic.
+OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS="${OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS:-5}"
+OPENBRAIN_DS_HEALTH_RETRY_INTERVAL="${OPENBRAIN_DS_HEALTH_RETRY_INTERVAL:-10}"
 
 # The secret-bearing EnvironmentFile the system units read. The system
 # openbrain-web must NOT be started until this file exists (Config precedes
@@ -900,11 +923,58 @@ health_check_remote() {
   return 1
 }
 
+# retry_probe runs PROBE_NAME (a function already defined in this file,
+# taking whatever positional args follow) up to MAX_ATTEMPTS times, sleeping
+# INTERVAL_SECONDS between failed attempts (never after the last one).
+# Returns 0 the instant an attempt succeeds. On exhaustion, returns the LAST
+# attempt's own exit code unchanged, so a caller reading a tri-state probe
+# (health_check_remote's 0/1/2) sees exactly the taxonomy a single call
+# would have produced: only the TIMING of reporting a genuine failure
+# changes, never the failure code (OB-086 invariant: fail-closed, existing
+# exit-code taxonomy unchanged).
+#
+# retry_probe only ever wraps a read-only probe. It must never be pointed at
+# restart_unit, install_version, or any other state-mutating step: retrying
+# those would repeat the mutation, not just re-check its result.
+#
+# Logs "attempt N of MAX" on every failed attempt, including the last, so a
+# retry-exhausted failure is at least as visible as today's single-shot one;
+# the caller's own failure message (below) still fires on top of this.
+retry_probe() {
+  local probe_name="$1" max_attempts="$2" interval_seconds="$3"
+  shift 3
+  local attempt status=0
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    # The exit status must be captured INSIDE the else branch: a bare `if
+    # cmd; then ...; fi` with no else reports exit status 0 once the block
+    # ends when the condition was false (POSIX: the if statement's own exit
+    # status is 0 when no branch ran), which would silently discard the
+    # probe's real failure code here.
+    if "$probe_name" "$@"; then
+      return 0
+    else
+      status=$?
+    fi
+    log_info "health probe '${probe_name}' failed on attempt ${attempt} of ${max_attempts}"
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      sleep "$interval_seconds"
+    fi
+  done
+
+  return "$status"
+}
+
 # run_health_check is the two-tier gate. A local failure is always a
 # genuine failure. When local passes, a remote failure is a genuine
 # failure, but a remote connection failure is reported as
 # HEALTH_REMOTE_UNREACHABLE, not a genuine failure, so a cloudflared
 # outage does not trigger a rollback.
+#
+# Each tier is retried via retry_probe (OB-086) up to
+# OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS times, OPENBRAIN_DS_HEALTH_RETRY_INTERVAL
+# seconds apart, because a probe fired immediately after `systemctl restart`
+# can race the app binding its port.
 #
 # Guarded explicitly: invoked as a bare statement in callers under `local
 # status=0; run_health_check ... || status=$?`, because both of
@@ -913,25 +983,25 @@ health_check_remote() {
 run_health_check() {
   local local_url="$1" remote_url="$2"
 
-  if ! health_check_local "$local_url"; then
-    log_error healthcheck "local health check failed: ${local_url}"
+  if ! retry_probe health_check_local "$OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS" "$OPENBRAIN_DS_HEALTH_RETRY_INTERVAL" "$local_url"; then
+    log_error healthcheck "local health check failed after ${OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS} attempt(s): ${local_url}"
     return "$HEALTH_FAIL"
   fi
   log_info "local health check passed: ${local_url}"
 
   local remote_status=0
-  health_check_remote "$remote_url" || remote_status=$?
+  retry_probe health_check_remote "$OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS" "$OPENBRAIN_DS_HEALTH_RETRY_INTERVAL" "$remote_url" || remote_status=$?
   case "$remote_status" in
     0)
       log_info "remote health check passed: ${remote_url}"
       return "$HEALTH_OK"
       ;;
     2)
-      log_info "remote health check UNREACHABLE (not a genuine failure, likely a tunnel outage): ${remote_url}"
+      log_info "remote health check UNREACHABLE after ${OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS} attempt(s) (not a genuine failure, likely a tunnel outage): ${remote_url}"
       return "$HEALTH_REMOTE_UNREACHABLE"
       ;;
     *)
-      log_error healthcheck "remote health check reachable but failed: ${remote_url}"
+      log_error healthcheck "remote health check reachable but failed after ${OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS} attempt(s): ${remote_url}"
       return "$HEALTH_FAIL"
       ;;
   esac
