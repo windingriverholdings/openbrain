@@ -806,6 +806,156 @@ EOF
   [[ "$output" == *"attempt 3 of 3"* ]]
 }
 
+# --- retry_probe fail-closed validation (Leon HIGH, OB-086 review) --------
+# max_attempts=0 (or negative, or non-numeric) makes the C-style `for` loop
+# run ZERO times, falling straight through to `return "$status"` with status
+# still at its initialized 0: a fail-OPEN bug that reports the health gate
+# as passed without the probe ever running. These tests prove the fix
+# rejects that input loudly, before any attempt, rather than defaulting or
+# proceeding.
+
+@test "retry_probe fails closed and NEVER calls the probe when max_attempts is zero (the fail-open bypass itself)" {
+  local probe_file="${WORK_DIR}/probe.sh"
+  local count_file="${WORK_DIR}/count"
+  # succeed_on_attempt=1: if the zero-iteration bypass were still present,
+  # this probe would look "healthy" the instant it was ever called, so the
+  # only thing standing between this test and a false pass is that the
+  # probe is never invoked at all.
+  write_counting_probe "$probe_file" would_pass_if_called 1
+
+  run env CALL_COUNT_FILE="$count_file" bash -c "
+    source '$probe_file'
+    source '$SCRIPT'
+    retry_probe would_pass_if_called 0 0
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"invalid retry attempts '0'"* ]]
+  # The fail-closed proof: the probe function was never invoked at all, so
+  # it never got the chance to write a call count.
+  [ ! -f "$count_file" ]
+}
+
+@test "retry_probe fails closed on a negative max_attempts" {
+  run bash -c "source '$SCRIPT'; retry_probe true -1 0"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"invalid retry attempts '-1'"* ]]
+}
+
+@test "retry_probe fails closed on a non-numeric max_attempts" {
+  run bash -c "source '$SCRIPT'; retry_probe true bogus 0"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"invalid retry attempts 'bogus'"* ]]
+}
+
+@test "retry_probe fails closed when max_attempts exceeds the retry ceiling" {
+  run bash -c "source '$SCRIPT'; retry_probe true 999999999 0"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"exceeds the 60-attempt ceiling"* ]]
+}
+
+@test "retry_probe fails closed on a non-numeric interval_seconds" {
+  run bash -c "source '$SCRIPT'; retry_probe true 3 bogus"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"invalid retry interval 'bogus'"* ]]
+}
+
+@test "retry_probe fails closed on a negative interval_seconds" {
+  run bash -c "source '$SCRIPT'; retry_probe true 3 -1"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"invalid retry interval '-1'"* ]]
+}
+
+@test "run_health_check fails closed rather than silently passing when OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS is malformed" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+
+  # A plan that WOULD report healthy on the very first call, so the only
+  # thing standing between this test and a false pass is the validation
+  # itself: if OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=0 silently bypassed the
+  # probe, run_health_check would report HEALTH_OK here.
+  curl_plan "${WORK_DIR}/local.plan" ok
+  curl_plan "${WORK_DIR}/remote.plan" 200
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS=0 OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"invalid retry attempts '0'"* ]]
+  [ ! -f "${WORK_DIR}/local.count" ]
+}
+
+# --- retry_probe / run_health_check documented defaults --------------------
+# No test previously asserted the actual DEFAULT values (Tess LOW, OB-086
+# review): that an unset OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS resolves to
+# exactly 5, and that the default OPENBRAIN_DS_HEALTH_RETRY_INTERVAL is
+# exactly 10 (asserted via a stub `sleep` so the test never actually waits).
+
+@test "an unset OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS resolves to exactly the documented default of 5" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+
+  # Succeeds only on the 5th call: if the default were less than 5, this
+  # would exhaust and fail before reaching "ok"; if the default were more
+  # than 5, the probe count would still stop at 5 the moment it succeeds,
+  # which the sibling exhaustion test below rules out from the other side.
+  curl_plan "${WORK_DIR}/local.plan" fail fail fail fail ok
+  curl_plan "${WORK_DIR}/remote.plan" 200
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 0 ]
+  [ "$(cat "${WORK_DIR}/local.count")" = "5" ]
+}
+
+@test "an unset OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS exhausts at exactly 5 attempts (the default's other boundary)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  write_fake_curl "$fake_bin"
+
+  curl_plan "${WORK_DIR}/local.plan" fail
+  curl_plan "${WORK_DIR}/remote.plan" 200
+  run env PATH="${fake_bin}:${PATH}" OPENBRAIN_DS_ENV_FILE="$ENV_FILE" \
+    OPENBRAIN_DS_HEALTH_RETRY_INTERVAL=0 \
+    FAKE_CURL_LOCAL_PLAN="${WORK_DIR}/local.plan" FAKE_CURL_LOCAL_COUNTER="${WORK_DIR}/local.count" \
+    FAKE_CURL_REMOTE_PLAN="${WORK_DIR}/remote.plan" FAKE_CURL_REMOTE_COUNTER="${WORK_DIR}/remote.count" \
+    bash -c "source '$SCRIPT'; run_health_check http://127.0.0.1:10203/health https://openbrain.wr-s.net/mcp"
+  [ "$status" -eq 1 ]
+  [ "$(cat "${WORK_DIR}/local.count")" = "5" ]
+}
+
+@test "the default retry interval constant is exactly 10 seconds (asserted via a stub sleep, no real waiting)" {
+  local fake_bin="${WORK_DIR}/fakebin"
+  mkdir -p "$fake_bin"
+  local sleep_log="${WORK_DIR}/sleep.log"
+  cat > "${fake_bin}/sleep" <<EOF
+#!/usr/bin/env bash
+echo "\$1" >> "${sleep_log}"
+exit 0
+EOF
+  chmod +x "${fake_bin}/sleep"
+
+  local probe_file="${WORK_DIR}/probe.sh"
+  local count_file="${WORK_DIR}/count"
+  write_counting_probe "$probe_file" ok_on_second 2
+
+  # OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS / _INTERVAL are deliberately left
+  # UNSET here so the script's own `${VAR:-default}` resolution supplies
+  # them, then passed straight through as retry_probe's own arguments: this
+  # exercises the real default, not a value the test chose.
+  run env PATH="${fake_bin}:${PATH}" CALL_COUNT_FILE="$count_file" timeout 5 bash -c "
+    source '$probe_file'
+    source '$SCRIPT'
+    retry_probe ok_on_second \"\$OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS\" \"\$OPENBRAIN_DS_HEALTH_RETRY_INTERVAL\"
+  "
+  [ "$status" -eq 0 ]
+  [ "$(cat "$sleep_log")" = "10" ]
+}
+
 # --- run_health_check retry wiring (OB-086) -------------------------------
 # Exercises retry_probe through the real health_check_local/health_check_remote
 # contracts and the write_fake_curl plan/counter mock, so the assertions
