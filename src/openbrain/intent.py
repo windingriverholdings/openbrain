@@ -195,7 +195,7 @@ HELP_TEXT = """
 
 **Update a fact (supersede):**
 > actually, we switched from Redis to Valkey
-> update: Alice moved to team B
+> update: Alice moved to the platform team
 > correction: the rate limit is 2000, not 1000
 
 **Deep capture (extract multiple thoughts):**
