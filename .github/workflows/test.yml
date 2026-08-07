@@ -44,6 +44,16 @@
 #   Failing a job fails the PR's checks but does NOT block merge until the job is
 #   listed as a REQUIRED status check in main's ruleset (a later admin settings
 #   toggle). The exact context string is "Unit tests".
+#
+# "Python tests" JOB (OB-079)
+#   Runs alongside "Unit tests", with no `needs:` between them: both start
+#   immediately and report independently. Guards against fixture-pipeline
+#   drift (scripts/generate_fixtures.py vs testdata/*.json, e.g. PR #69's
+#   hand-edit of intent_cases.json that the generator would have silently
+#   deleted on the next regen) and runs the Python test suite, since prior
+#   to OB-079 CI ran zero Python. `prefix-dev/setup-pixi` is pinned to an
+#   exact version (v0.10.1), not a major-version alias, per that action's
+#   own README: its API is not yet stable across minor versions.
 
 name: Test
 
@@ -119,3 +129,55 @@ jobs:
 
       - name: Unit tests (race detector)
         run: go test -race -count=1 ./...
+
+  # ---------------------------------------------------------------------------
+  # Python fixture-drift gate + pytest suite (OB-079). Runs independently of
+  # unit-tests: no `needs:` between the two jobs. Catches the class of drift
+  # that let PR #69 hand-edit testdata/intent_cases.json without updating
+  # scripts/generate_fixtures.py's inputs list: the next `make fixtures` would
+  # have silently deleted those cases with no test failure anywhere.
+  # ---------------------------------------------------------------------------
+  python-tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # SHA-pinned, not a tag: setup-pixi is a third-party action and its own
+      # README says its API is not yet stable across minor versions, so a
+      # mutable tag (even an exact one like v0.10.1) is not enough here.
+      # SHA resolved from refs/tags/v0.10.1 via the GitHub API.
+      - name: Set up pixi (pinned v0.39.5)
+        uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        with:
+          pixi-version: v0.39.5
+          environments: dev
+          cache: true
+
+      # Regenerate every testdata/*.json fixture from the current generator
+      # inputs, then fail if the checked-in copy does not match byte-for-byte.
+      # This is the mechanical half of the guard: a hand edit to any fixture
+      # file with no matching generator input fails here, not silently at the
+      # next regen.
+      - name: Regenerate fixtures
+        run: pixi run -e dev python scripts/generate_fixtures.py
+
+      # `git diff --exit-code` alone only diffs TRACKED paths, so a generator
+      # that starts emitting a brand-new testdata/*.json file would pass this
+      # gate clean with the new file left untracked. `git add -N` (intent-to-
+      # add) stages every untracked path in testdata/ as an empty blob first,
+      # so git diff sees it as a full addition and the exit-code check catches
+      # it too. This never actually commits anything: the job container is
+      # discarded after the run.
+      - name: Fail on fixture drift (including new, untracked files)
+        run: |
+          git add -N testdata/
+          git diff --exit-code testdata/
+
+      # pytest exits 5 when it collects zero tests. That is a real failure
+      # condition here (a broken test path or config would otherwise report
+      # green), and it is already non-zero, so no special-casing is needed:
+      # any non-zero exit fails this step and the job.
+      - name: Run pytest
+        run: pixi run -e dev pytest tests/ -v

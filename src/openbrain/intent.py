@@ -1,8 +1,8 @@
 """Simple intent detection for natural language input.
 
 Classifies a message into an OpenBrain action without requiring an LLM.
-    Covers the common patterns; likely search phrases are marked ambiguous
-    instead of being silently captured.
+Covers the common patterns; likely search phrases are marked ambiguous
+instead of being silently captured.
 
 # TODO(tailscale): If exposing over the network, add rate limiting here.
 # TODO(llm): Replace regex intent matching with a local LLM classifier
@@ -195,7 +195,7 @@ HELP_TEXT = """
 
 **Update a fact (supersede):**
 > actually, we switched from Redis to Valkey
-> update: Alice moved to team B
+> update: Alice moved to the platform team
 > correction: the rate limit is 2000, not 1000
 
 **Deep capture (extract multiple thoughts):**
@@ -206,6 +206,10 @@ HELP_TEXT = """
 > search: Redis decisions
 > what do I know about Alice?
 > find: deployment lessons
+> look for tent notes
+> notes about camping
+
+If a short message could be either a note or a search, OpenBrain asks you to choose.
 
 **Weekly review:**
 > weekly review

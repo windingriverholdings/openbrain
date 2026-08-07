@@ -36,7 +36,7 @@
   },
   {
     "input_text": "update: Alice moved to team B",
-    "input_text_len": 30,
+    "input_text_len": 29,
     "threshold": 500,
     "expected_needs_primary": true,
     "actual_needs_primary": true

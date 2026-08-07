@@ -4,6 +4,13 @@
 Runs intent.parse(), extract._parse_extraction_response(), and
 llm._needs_primary_model() against comprehensive inputs, dumping
 results to testdata/*.json for Go test consumption.
+
+The files under testdata/ are GENERATED OUTPUT: never hand-edit them.
+A hand edit adds a case to the JSON without adding the matching input
+to this script, so the next `make fixtures` regen silently deletes it
+(see OB-079). To add or change a case, edit the relevant `inputs` list
+in this script, then run `make fixtures` (or `pixi run -e dev python
+scripts/generate_fixtures.py`) and commit the regenerated JSON.
 """
 
 import json
@@ -138,6 +145,12 @@ def generate_intent_fixtures():
         "a",
         "Hello",
         "This is a medium-length statement that doesn't match any explicit patterns but is under 200 characters so it should default to capture.",
+
+        # === SEARCH / AMBIGUOUS (tent regression, PR #69) ===
+        "look for tent notes",
+        "notes about tent",
+        "anything on tents",
+        "tent notes",
     ]
 
     fixtures = []
@@ -356,26 +369,27 @@ def generate_llm_routing_fixtures():
     return fixtures
 
 
+# Single source of truth for which testdata/*.json file each generator
+# function produces. main() and tests/test_generate_fixtures.py both read
+# this manifest rather than hardcoding the filename list a second time, so a
+# new fixture file cannot be added to one without the other noticing: main()
+# would never write it if it is missing from here, and the test's disk-vs-
+# manifest check (see tests/test_generate_fixtures.py) fails if the two
+# diverge.
+FIXTURE_MANIFEST = {
+    "intent_cases.json": generate_intent_fixtures,
+    "infer_type_cases.json": generate_infer_type_fixtures,
+    "extract_parse_cases.json": generate_extract_parse_fixtures,
+    "llm_routing_cases.json": generate_llm_routing_fixtures,
+}
+
+
 def main():
-    print("Generating intent fixtures...")
-    intent_fixtures = generate_intent_fixtures()
-    (TESTDATA / "intent_cases.json").write_text(json.dumps(intent_fixtures, indent=2) + "\n")
-    print(f"  -> {len(intent_fixtures)} cases written to testdata/intent_cases.json")
-
-    print("Generating infer_type fixtures...")
-    type_fixtures = generate_infer_type_fixtures()
-    (TESTDATA / "infer_type_cases.json").write_text(json.dumps(type_fixtures, indent=2) + "\n")
-    print(f"  -> {len(type_fixtures)} cases written to testdata/infer_type_cases.json")
-
-    print("Generating extract parse fixtures...")
-    extract_fixtures = generate_extract_parse_fixtures()
-    (TESTDATA / "extract_parse_cases.json").write_text(json.dumps(extract_fixtures, indent=2) + "\n")
-    print(f"  -> {len(extract_fixtures)} cases written to testdata/extract_parse_cases.json")
-
-    print("Generating LLM routing fixtures...")
-    llm_fixtures = generate_llm_routing_fixtures()
-    (TESTDATA / "llm_routing_cases.json").write_text(json.dumps(llm_fixtures, indent=2) + "\n")
-    print(f"  -> {len(llm_fixtures)} cases written to testdata/llm_routing_cases.json")
+    for filename, generate in FIXTURE_MANIFEST.items():
+        print(f"Generating {filename}...")
+        fixtures = generate()
+        (TESTDATA / filename).write_text(json.dumps(fixtures, indent=2) + "\n")
+        print(f"  -> {len(fixtures)} cases written to testdata/{filename}")
 
     print("\nDone! All fixtures written to testdata/")
 

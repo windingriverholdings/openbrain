@@ -1350,10 +1350,9 @@ async function checkVizStatusAndLoad() {
 
 // Manual "Generate new map" button: the only page action that triggers the
 // async projection + poll + progress path. Goes through the same single-flight
-// guard,
-// so a click that somehow lands while another explicit session is already
-// running (rebuildBtn is disabled for that session's duration) cannot spawn a
-// second poll loop.
+// guard, so a click that somehow lands while another explicit session is
+// already running (rebuildBtn is disabled for that session's duration)
+// cannot spawn a second poll loop.
 rebuildBtn.addEventListener('click', async function() {
   if (!beginVizSession('Generating…')) return;
   showRefreshIndicator();
