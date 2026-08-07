@@ -923,6 +923,14 @@ health_check_remote() {
   return 1
 }
 
+# Ceiling on retry_probe's max_attempts (Leon LOW, OB-086 review): guards
+# against an absurdly large OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS (a typo like
+# 999999999) turning a cutover into an effectively unbounded hang. Not
+# env-overridable: nothing in this file's contract needs more than a few
+# dozen retries, and making the ceiling itself overridable would just move
+# the same unbounded-input problem one level up.
+readonly OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS_CEILING=60
+
 # retry_probe runs PROBE_NAME (a function already defined in this file,
 # taking whatever positional args follow) up to MAX_ATTEMPTS times, sleeping
 # INTERVAL_SECONDS between failed attempts (never after the last one).
@@ -940,10 +948,37 @@ health_check_remote() {
 # Logs "attempt N of MAX" on every failed attempt, including the last, so a
 # retry-exhausted failure is at least as visible as today's single-shot one;
 # the caller's own failure message (below) still fires on top of this.
+#
+# Validates its own MAX_ATTEMPTS and INTERVAL_SECONDS before the loop
+# (Leon HIGH, OB-086 review): a non-numeric, zero, or negative max_attempts
+# makes the C-style `for` loop below run ZERO times, falling straight
+# through to `return "$status"` with status still at its initialized 0,
+# i.e. reporting SUCCESS without the probe ever running once. A caller
+# reading that as "healthy" when the config was simply malformed is a
+# fail-open bug, not a benign default. Validated here, at the point of use,
+# so this holds for every caller of retry_probe (present and future), not
+# only the run_health_check env-var pipeline. max_attempts must be a
+# positive integer within OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS_CEILING;
+# interval_seconds must be a non-negative integer (0 is a legitimate "no
+# delay between attempts" value, not a fail-open risk the way max_attempts=0
+# is, and tests rely on it to stay fast).
 retry_probe() {
   local probe_name="$1" max_attempts="$2" interval_seconds="$3"
   shift 3
   local attempt status=0
+
+  if ! [[ "$max_attempts" =~ ^[0-9]+$ ]] || [[ "$max_attempts" -lt 1 ]]; then
+    log_error healthcheck "invalid retry attempts '${max_attempts}' for probe '${probe_name}': must be a positive integer; refusing to report success without running the probe"
+    return 1
+  fi
+  if [[ "$max_attempts" -gt "$OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS_CEILING" ]]; then
+    log_error healthcheck "retry attempts '${max_attempts}' for probe '${probe_name}' exceeds the ${OPENBRAIN_DS_HEALTH_RETRY_ATTEMPTS_CEILING}-attempt ceiling; refusing to risk an effectively unbounded cutover hang"
+    return 1
+  fi
+  if ! [[ "$interval_seconds" =~ ^[0-9]+$ ]]; then
+    log_error healthcheck "invalid retry interval '${interval_seconds}' for probe '${probe_name}': must be a non-negative integer number of seconds"
+    return 1
+  fi
 
   for ((attempt = 1; attempt <= max_attempts; attempt++)); do
     # The exit status must be captured INSIDE the else branch: a bare `if
@@ -1182,6 +1217,10 @@ restore_user_path() {
     done
   fi
 
+  # Deliberately single-shot, not retry_probe-wrapped (OB-086 review): this
+  # confirms an already-restored --user service that was serving moments
+  # ago, not a fresh restart racing the app's port-binding startup delay,
+  # so the retry budget's rationale does not apply here.
   if health_check_local "$local_url"; then
     log_info "recovery: the --user path is serving again (local health check passed): ${local_url}"
     return 0
