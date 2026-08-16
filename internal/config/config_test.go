@@ -433,3 +433,46 @@ func TestRetrievalDepthOverridesFromEnv(t *testing.T) {
 	assert.Equal(t, 90, cfg.SearchRRFK)
 	assert.Equal(t, 20, cfg.SearchSummaryTopK)
 }
+
+func TestConverseDefaults(t *testing.T) {
+	cfg, err := Load()
+	assert.NoError(t, err)
+
+	assert.Equal(t, "", cfg.ConverseModel)
+	assert.Equal(t, "", cfg.ConverseRewriteModel)
+	assert.Equal(t, 8, cfg.ConverseMaxNotes)
+	assert.Equal(t, 3000, cfg.ConversePromptTokens)
+	assert.Equal(t, 8192, cfg.ConverseNumCtx)
+	assert.Equal(t, 1, cfg.ConverseMaxRounds)
+	assert.Equal(t, 30*time.Minute, cfg.ConverseKeepAlive)
+	assert.Equal(t, 25*time.Second, cfg.ConverseRewriteTimeout)
+	assert.Equal(t, 90*time.Second, cfg.ConverseAnswerTimeout)
+	assert.False(t, cfg.ConverseWarmModel)
+}
+
+func TestConverseOverridesFromEnv(t *testing.T) {
+	t.Setenv("OPENBRAIN_CONVERSE_MODEL", "qwen2.5:7b")
+	t.Setenv("OPENBRAIN_CONVERSE_REWRITE_MODEL", "qwen2.5:1.5b")
+	t.Setenv("OPENBRAIN_CONVERSE_MAX_NOTES", "12")
+	t.Setenv("OPENBRAIN_CONVERSE_PROMPT_TOKENS", "4000")
+	t.Setenv("OPENBRAIN_CONVERSE_NUM_CTX", "16384")
+	t.Setenv("OPENBRAIN_CONVERSE_MAX_ROUNDS", "2")
+	t.Setenv("OPENBRAIN_CONVERSE_KEEP_ALIVE", "15m")
+	t.Setenv("OPENBRAIN_CONVERSE_REWRITE_TIMEOUT", "10s")
+	t.Setenv("OPENBRAIN_CONVERSE_ANSWER_TIMEOUT", "45s")
+	t.Setenv("OPENBRAIN_CONVERSE_WARM_MODEL", "true")
+
+	cfg, err := Load()
+	assert.NoError(t, err)
+
+	assert.Equal(t, "qwen2.5:7b", cfg.ConverseModel)
+	assert.Equal(t, "qwen2.5:1.5b", cfg.ConverseRewriteModel)
+	assert.Equal(t, 12, cfg.ConverseMaxNotes)
+	assert.Equal(t, 4000, cfg.ConversePromptTokens)
+	assert.Equal(t, 16384, cfg.ConverseNumCtx)
+	assert.Equal(t, 2, cfg.ConverseMaxRounds)
+	assert.Equal(t, 15*time.Minute, cfg.ConverseKeepAlive)
+	assert.Equal(t, 10*time.Second, cfg.ConverseRewriteTimeout)
+	assert.Equal(t, 45*time.Second, cfg.ConverseAnswerTimeout)
+	assert.True(t, cfg.ConverseWarmModel)
+}

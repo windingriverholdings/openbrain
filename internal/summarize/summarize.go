@@ -2,8 +2,13 @@
 package summarize
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -36,6 +41,12 @@ type Provider interface {
 	Summarize(ctx context.Context, query string, results []model.ThoughtRow) (string, error)
 }
 
+// StreamProvider is a provider that supports streaming chunk-by-chunk.
+type StreamProvider interface {
+	Provider
+	StreamSummarize(ctx context.Context, query string, results []model.ThoughtRow, onChunk func(string) error) (string, error)
+}
+
 // ModelNamer is implemented by providers that can report the configured model.
 type ModelNamer interface {
 	ModelName() string
@@ -45,6 +56,7 @@ type ollamaProvider struct {
 	provider   wrsllm.Provider
 	model      string
 	maxResults int
+	baseURL    string
 }
 
 // New creates a summarizer using the configured local model fallback order.
@@ -73,6 +85,7 @@ func New(cfg *config.Config) (Provider, error) {
 		provider:   wrsllm.NewOllamaProvider(cfg.OllamaBaseURL, modelName, 0),
 		model:      modelName,
 		maxResults: maxResults,
+		baseURL:    cfg.OllamaBaseURL,
 	}, nil
 }
 
@@ -96,6 +109,88 @@ func (p *ollamaProvider) Summarize(ctx context.Context, query string, results []
 }
 
 func (p *ollamaProvider) ModelName() string { return p.model }
+
+func (p *ollamaProvider) StreamSummarize(ctx context.Context, query string, results []model.ThoughtRow, onChunk func(string) error) (string, error) {
+	if strings.TrimSpace(query) == "" {
+		return "", fmt.Errorf("cannot summarize an empty query")
+	}
+	if len(results) == 0 {
+		msg := "No matching information was found in the retrieved notes."
+		_ = onChunk(msg)
+		return msg, nil
+	}
+	prompt := FormatPromptN(query, results, p.maxResults)
+
+	reqPayload := struct {
+		Model  string `json:"model"`
+		Prompt string `json:"prompt"`
+		System string `json:"system"`
+		Stream bool   `json:"stream"`
+	}{
+		Model:  p.model,
+		Prompt: prompt,
+		System: systemPrompt,
+		Stream: true,
+	}
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(reqPayload); err != nil {
+		return "", err
+	}
+
+	apiURL := p.baseURL
+	if apiURL == "" {
+		apiURL = "http://localhost:11434"
+	}
+	apiURL = strings.TrimSuffix(apiURL, "/") + "/api/generate"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var fullResponse strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var chunk struct {
+			Response string `json:"response"`
+			Done     bool   `json:"done"`
+		}
+		if err := json.Unmarshal(line, &chunk); err != nil {
+			return "", err
+		}
+		if chunk.Response != "" {
+			fullResponse.WriteString(chunk.Response)
+			if err := onChunk(chunk.Response); err != nil {
+				return "", err
+			}
+		}
+		if chunk.Done {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	return fullResponse.String(), nil
+}
 
 // FormatPrompt creates a bounded prompt using the default result cap.
 func FormatPrompt(query string, results []model.ThoughtRow) string {

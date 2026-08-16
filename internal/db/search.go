@@ -106,6 +106,12 @@ func buildHybridSearchQuery(embeddingDim int) string {
 // embedding argument is cast to vector(embeddingDim) so pgvector validates the
 // dimension and overload resolution stays unambiguous.
 func HybridSearchThoughts(ctx context.Context, p *pgxpool.Pool, queryText string, embedding []float32, topK int, keywordWeight, semanticWeight, scoreThreshold float64, includeHistory bool, thoughtType string, createdFrom, createdTo *time.Time, embeddingDim int) ([]model.ThoughtRow, error) {
+	return HybridSearchThoughtsExcluding(ctx, p, queryText, embedding, topK, keywordWeight, semanticWeight, scoreThreshold, includeHistory, thoughtType, createdFrom, createdTo, embeddingDim, nil)
+}
+
+// HybridSearchThoughtsExcluding performs hybrid search while excluding rows
+// already read during a bounded conversational retrieval session.
+func HybridSearchThoughtsExcluding(ctx context.Context, p *pgxpool.Pool, queryText string, embedding []float32, topK int, keywordWeight, semanticWeight, scoreThreshold float64, includeHistory bool, thoughtType string, createdFrom, createdTo *time.Time, embeddingDim int, excludeIDs []string) ([]model.ThoughtRow, error) {
 	if len(embedding) == 0 {
 		return nil, fmt.Errorf("search: empty embedding vector")
 	}
@@ -124,14 +130,28 @@ func HybridSearchThoughts(ctx context.Context, p *pgxpool.Pool, queryText string
 	if createdFrom != nil || createdTo != nil {
 		innerK = topK * 4
 	}
+	resultLimit := topK
+	if len(excludeIDs) > 0 {
+		// The SQL function ranks before exclusion, so retrieve enough rows to
+		// replace every already-read candidate.
+		innerK += len(excludeIDs) * 2
+		resultLimit += len(excludeIDs)
+	}
 
 	query := buildHybridSearchQuery(embeddingDim)
+	if len(excludeIDs) > 0 {
+		query = fmt.Sprintf(`SELECT * FROM (%s) ranked WHERE id <> ALL($12::text[]) ORDER BY combined_score DESC`, query)
+	}
 
-	rows, err := p.Query(ctx, query,
+	args := []any{
 		queryText, VecLiteral(embedding), innerK,
 		keywordWeight, semanticWeight, scoreThreshold, currentOnly, filterType,
-		createdFrom, createdTo, topK,
-	)
+		createdFrom, createdTo, resultLimit,
+	}
+	if len(excludeIDs) > 0 {
+		args = append(args, excludeIDs)
+	}
+	rows, err := p.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("hybrid search: %w", err)
 	}

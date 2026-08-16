@@ -274,25 +274,67 @@ func TestChatPageRendersStructuredSearchResults(t *testing.T) {
 	assert.Contains(t, page, "notes containing your exact words")
 	assert.Contains(t, page, "surface_mode")
 	assert.NotContains(t, page, "ai_assist")
-	assert.Contains(t, composer, "AI Summarize")
-	assert.Contains(t, page, "ai_summarize")
-	assert.Contains(t, page, "summary_details")
 	assert.Contains(t, composerCSS, `#search-mode[aria-pressed="true"]`)
-	assert.Contains(t, page, `aiSummarizeWrapEl.hidden = surfaceMode !== 'search'`)
-	assert.Contains(t, page, "function buildSummaryCard(data)")
-	assert.Contains(t, page, "summary-card")
-	assert.Contains(t, page, "renderNoteBody(data.summary")
-	assert.Contains(t, page, "summary-body")
+	assert.Contains(t, page, "conversation_status")
+	assert.Contains(t, page, "conversation_chunk")
+	assert.Contains(t, page, "function finishConversation(data)")
+	assert.NotContains(t, page, "summary-card")
 	assert.NotContains(t, page, "Store the original text exactly as entered")
 	assert.NotContains(t, page, "add extra extracted thoughts")
 	assert.Contains(t, page, "What would you like to remember?")
 	assert.Contains(t, page, "e.key === 'Tab'")
 	assert.Contains(t, page, "mode-store")
-	assert.Contains(t, composer, "Fast embeds your query once")
-	assert.Contains(t, composer, "Hybrid combines semantic similarity")
-	assert.Contains(t, composer, "AI Search chooses several safe searches")
+	assert.Contains(t, composer, "Semantic search combines meaning-based similarity")
+	assert.Contains(t, composer, "Conversational search finds up to 8 relevant notes")
 
 	// Note content must never be injected as markup.
 	assert.NotContains(t, page, ".innerHTML = t.content")
 	assert.NotContains(t, page, ".innerHTML = row.content")
+}
+
+func TestWsResponse_ConversationDetailsJSONContract(t *testing.T) {
+	sources := []wsSearchResult{{
+		ID:      "note-01",
+		Content: "Valkey replaces Redis",
+	}}
+	resp := wsResponse{
+		Intent:      "conversation",
+		Mode:        "conversational",
+		Content:     "We switched to Valkey [1].",
+		Sources:     &sources,
+		SurfaceMode: "search",
+		ConversationDetails: &conversationDetails{
+			NotesRead:    5,
+			NotesCited:   1,
+			SearchRounds: 1,
+			SearchQuery:  "Valkey Redis caching",
+		},
+	}
+
+	data, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	var raw struct {
+		Intent              string           `json:"intent"`
+		Mode                string           `json:"mode"`
+		Content             string           `json:"content"`
+		Sources             []wsSearchResult `json:"sources"`
+		ConversationDetails struct {
+			NotesRead    int    `json:"notes_read"`
+			NotesCited   int    `json:"notes_cited"`
+			SearchRounds int    `json:"search_rounds"`
+			SearchQuery  string `json:"search_query"`
+		} `json:"conversation_details"`
+	}
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	assert.Equal(t, "conversation", raw.Intent)
+	assert.Equal(t, "conversational", raw.Mode)
+	assert.Equal(t, "We switched to Valkey [1].", raw.Content)
+	require.Len(t, raw.Sources, 1)
+	assert.Equal(t, "note-01", raw.Sources[0].ID)
+	assert.Equal(t, 5, raw.ConversationDetails.NotesRead)
+	assert.Equal(t, 1, raw.ConversationDetails.NotesCited)
+	assert.Equal(t, 1, raw.ConversationDetails.SearchRounds)
+	assert.Equal(t, "Valkey Redis caching", raw.ConversationDetails.SearchQuery)
 }

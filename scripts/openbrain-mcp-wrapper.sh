@@ -15,11 +15,18 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OPENBRAIN_MCP_ENV_FILE="${OPENBRAIN_MCP_ENV_FILE:-/etc/openbrain/openbrain.env}"
 
-# Export all vars from the system config if it exists
+# Export all vars from the system config if it exists. In a development
+# checkout, use the repo .env explicitly so the MCP server does not depend on
+# the client's current working directory.
 if [ -f "$OPENBRAIN_MCP_ENV_FILE" ]; then
 	set -a
 	# shellcheck source=/dev/null
 	source "$OPENBRAIN_MCP_ENV_FILE"
+	set +a
+elif [ -f "$REPO_DIR/.env" ]; then
+	set -a
+	# shellcheck source=/dev/null
+	source "$REPO_DIR/.env"
 	set +a
 fi
 

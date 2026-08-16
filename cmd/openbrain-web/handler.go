@@ -524,6 +524,7 @@ func apiReview(b *brain.Brain) http.HandlerFunc {
 }
 
 type wsMessage struct {
+	Type        string `json:"type,omitempty"`
 	Message     string `json:"message"`
 	Intent      string `json:"intent,omitempty"`
 	Mode        string `json:"mode,omitempty"`
@@ -565,6 +566,8 @@ type wsResponse struct {
 	// A pointer distinguishes "not a search response" (nil, omitted) from
 	// "search completed with no matches" (non-nil pointer to an empty array).
 	Results         *[]wsSearchResult `json:"results,omitempty"`
+	AIReferences    *[]wsSearchResult `json:"ai_references,omitempty"`
+	Sources         *[]wsSearchResult `json:"sources,omitempty"`
 	Ambiguous       bool              `json:"ambiguous,omitempty"`
 	Query           string            `json:"query,omitempty"`
 	Mode            string            `json:"mode,omitempty"`
@@ -576,6 +579,17 @@ type wsResponse struct {
 	CaptureDetails  *captureDetails   `json:"capture_details,omitempty"`
 	Summary         string            `json:"summary,omitempty"`
 	SummaryDetails  *summaryDetails   `json:"summary_details,omitempty"`
+	// Conversation provenance: how many notes were read versus cited, and the
+	// rewritten retrieval query. Surfaced so the answer's grounding is
+	// auditable rather than opaque.
+	ConversationDetails *conversationDetails `json:"conversation_details,omitempty"`
+}
+
+type conversationDetails struct {
+	NotesRead    int    `json:"notes_read"`
+	NotesCited   int    `json:"notes_cited"`
+	SearchRounds int    `json:"search_rounds"`
+	SearchQuery  string `json:"search_query,omitempty"`
 }
 
 type searchExpansion struct {
@@ -683,6 +697,24 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 		}
 		defer conn.Close()
 
+		var writeMu sync.Mutex
+		writeJSON := func(v any) error {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			return conn.WriteJSON(v)
+		}
+
+		var execMu sync.Mutex
+		var execCancel context.CancelFunc
+
+		defer func() {
+			execMu.Lock()
+			if execCancel != nil {
+				execCancel()
+			}
+			execMu.Unlock()
+		}()
+
 		for {
 			var msg wsMessage
 			if err := conn.ReadJSON(&msg); err != nil {
@@ -690,6 +722,15 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 					slog.Error("websocket read error", "error", err)
 				}
 				return
+			}
+
+			if msg.Type == "cancel" {
+				execMu.Lock()
+				if execCancel != nil {
+					execCancel()
+				}
+				execMu.Unlock()
+				continue
 			}
 
 			parsed := intent.Parse(msg.Message)
@@ -736,101 +777,203 @@ func wsHandler(b *brain.Brain, upgrader websocket.Upgrader, authToken string) ht
 				resp.Ambiguous = true
 				resp.Query = msg.Message
 				resp.Content = "I’m not sure whether you want to search for this or save it as a note."
-				if err := conn.WriteJSON(resp); err != nil {
+				if err := writeJSON(resp); err != nil {
 					slog.Error("websocket write error", "error", err)
 					return
 				}
 				continue
 			}
 
-			// Search is handled here rather than through Dispatch so the
-			// structured rows survive to the client. Dispatch would flatten
-			// them to a string, and re-running the search afterwards to
-			// recover them would embed the query twice (two Ollama round
-			// trips). The hybrid search itself is unchanged: same
-			// SearchOpts{Mode: "hybrid"} Dispatch uses, and the plain-text
-			// content field is rendered from these same rows by the shared
-			// formatter, so it is byte-identical to the old reply.
-			if parsed.Intent == intent.Search {
-				mode := msg.Mode
-				if mode == "" {
-					mode = "hybrid"
-				}
-				if mode != "hybrid" && mode != "assisted" && mode != "vector" && mode != "keyword" && mode != "ai" {
-					resp.Content = "Error: invalid search mode"
-					if err := conn.WriteJSON(resp); err != nil {
+			execMu.Lock()
+			if execCancel != nil {
+				execMu.Unlock()
+				_ = writeJSON(wsResponse{Content: "Error: another request is in progress"})
+				continue
+			}
+			ctx, cancel := context.WithCancel(r.Context())
+			execCancel = cancel
+			execMu.Unlock()
+
+			go func(ctx context.Context, msg wsMessage, parsed intent.ParsedIntent, resp wsResponse) {
+				defer func() {
+					execMu.Lock()
+					if execCancel != nil {
+						execCancel = nil
+					}
+					cancel()
+					execMu.Unlock()
+				}()
+
+				if parsed.Intent == intent.Search {
+					mode := msg.Mode
+					if mode == "" {
+						mode = "semantic"
+					}
+					if mode == "semantic" {
+						mode = "hybrid"
+					}
+					if mode != "hybrid" && mode != "assisted" && mode != "vector" && mode != "keyword" && mode != "ai" && mode != "conversational" {
+						resp.Content = "Error: invalid search mode"
+						_ = writeJSON(resp)
 						return
 					}
-					continue
-				}
-				searchOpts := brain.SearchOpts{Mode: mode}
-				if msg.From != "" {
-					if t, parseErr := time.Parse("2006-01-02", msg.From); parseErr != nil {
-						resp.Content = "Error: invalid from date"
-						if err := conn.WriteJSON(resp); err != nil {
+					searchOpts := brain.SearchOpts{Mode: mode}
+					if msg.From != "" {
+						if t, parseErr := time.Parse("2006-01-02", msg.From); parseErr != nil {
+							resp.Content = "Error: invalid from date"
+							_ = writeJSON(resp)
 							return
-						}
-						continue
-					} else {
-						searchOpts.CreatedFrom = &t
-					}
-				}
-				if msg.To != "" {
-					if t, parseErr := time.Parse("2006-01-02", msg.To); parseErr != nil {
-						resp.Content = "Error: invalid to date"
-						if err := conn.WriteJSON(resp); err != nil {
-							return
-						}
-						continue
-					} else {
-						eod := t.Add(24*time.Hour - time.Nanosecond)
-						searchOpts.CreatedTo = &eod
-					}
-				}
-				details, err := b.SearchWithDetails(r.Context(), parsed.Text, searchOpts)
-				if err != nil {
-					resp.Content = fmt.Sprintf("Error: %v", err)
-				} else {
-					resp.Content = brain.FormatSearchResults(details.Results)
-					results := toWSSearchResults(details.Results)
-					resp.Results = &results
-					resp.Mode = mode
-					resp.AxesUsed = details.AxesUsed
-					if details.Expansion != nil {
-						resp.SearchExpansion = &searchExpansion{
-							Interpretation: details.Expansion.Interpretation,
-							Terms:          details.Expansion.Terms,
-							Confidence:     details.Expansion.Confidence,
-						}
-					}
-					if msg.AISummarize && surfaceMode == "search" {
-						resp.SummaryDetails = &summaryDetails{ResultCount: len(details.Results)}
-						summary, summaryErr := b.SummarizeSearch(r.Context(), parsed.Text, details.Results)
-						if summaryErr != nil {
-							resp.SummaryDetails.Error = summaryErr.Error()
 						} else {
-							resp.Summary = summary.Summary
-							resp.SummaryDetails.ResultCount = summary.ResultCount
-							resp.SummaryDetails.ModelUsed = summary.ModelUsed
+							searchOpts.CreatedFrom = &t
 						}
 					}
-				}
-			} else {
-				var result string
-				var captureInfo *captureDetails
-				var err error
-				result, err = b.Dispatch(r.Context(), parsed, "web")
-				if err != nil {
-					result = fmt.Sprintf("Error: %v", err)
-				}
-				resp.Content = result
-				resp.CaptureDetails = captureInfo
-			}
+					if msg.To != "" {
+						if t, parseErr := time.Parse("2006-01-02", msg.To); parseErr != nil {
+							resp.Content = "Error: invalid to date"
+							_ = writeJSON(resp)
+							return
+						} else {
+							eod := t.Add(24*time.Hour - time.Nanosecond)
+							searchOpts.CreatedTo = &eod
+						}
+					}
+					var details brain.SearchDetails
+					var err error
+					if mode == "conversational" {
+						// Open the streaming bubble immediately so the UI has
+						// something to render before the first model call
+						// returns. ConverseSearch emits its own step statuses,
+						// so this deliberately does not duplicate one of them.
+						if err := writeJSON(wsResponse{Intent: "conversation_status", Content: "Thinking...", SurfaceMode: "search"}); err != nil {
+							return
+						}
+						conversation, conversationErr := b.ConverseSearch(ctx, parsed.Text, searchOpts,
+							func(chunk string) error {
+								return writeJSON(wsResponse{Intent: "conversation_chunk", Content: chunk, SurfaceMode: "search", Mode: "conversational"})
+							},
+							func(status string) error {
+								return writeJSON(wsResponse{Intent: "conversation_status", Content: status, SurfaceMode: "search", Mode: "conversational"})
+							},
+						)
+						if conversationErr != nil {
+							if errors.Is(conversationErr, context.Canceled) || strings.Contains(conversationErr.Error(), "context canceled") {
+								_ = writeJSON(wsResponse{Intent: "canceled", Content: "Operation stopped."})
+								return
+							}
+							resp.Content = fmt.Sprintf("Error: %v", conversationErr)
+						} else {
+							resp.Content = conversation.Answer
+							sources := toWSSearchResults(conversation.Sources)
+							resp.Sources = &sources
+							resp.Intent = "conversation"
+							resp.Mode = "conversational"
+							resp.ConversationDetails = &conversationDetails{
+								NotesRead:    conversation.NotesRead,
+								NotesCited:   len(conversation.Sources),
+								SearchRounds: conversation.SearchRounds,
+								SearchQuery:  conversation.SearchQuery,
+							}
+						}
+					} else if mode == "ai" {
+						if err := writeJSON(wsResponse{Intent: "ai_search_status", Content: "Searching your brain for the closest semantic matches...", SurfaceMode: "search"}); err != nil {
+							return
+						}
+						details, err = b.AISearchStream(ctx, parsed.Text, searchOpts,
+							func(chunk string) error {
+								return writeJSON(wsResponse{Intent: "ai_search_chunk", Content: chunk, SurfaceMode: "search"})
+							},
+							func(status string) error {
+								return writeJSON(wsResponse{Intent: "ai_search_status", Content: status, SurfaceMode: "search"})
+							},
+						)
+					} else {
+						details, err = b.SearchWithDetails(ctx, parsed.Text, searchOpts)
+					}
+					if err != nil {
+						if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
+							_ = writeJSON(wsResponse{Intent: "canceled", Content: "Operation stopped."})
+							return
+						}
+						resp.Content = fmt.Sprintf("Error: %v", err)
+					} else if mode != "conversational" {
+						// Conversational search has already populated an assistant answer
+						// and its grounded sources. Do not overwrite it with the legacy
+						// structured-search result formatter.
+						resp.Content = brain.FormatSearchResults(details.Results)
+						results := toWSSearchResults(details.Results)
+						resp.Results = &results
+						if mode == "ai" {
+							references := toWSSearchResults(details.AIReferences)
+							resp.AIReferences = &references
+						}
+						resp.Mode = mode
+						resp.AxesUsed = details.AxesUsed
+						if details.Expansion != nil {
+							resp.SearchExpansion = &searchExpansion{
+								Interpretation: details.Expansion.Interpretation,
+								Terms:          details.Expansion.Terms,
+								Confidence:     details.Expansion.Confidence,
+							}
+						}
+						if msg.AISummarize && resp.SurfaceMode == "search" {
+							resp.SummaryDetails = &summaryDetails{ResultCount: len(details.Results)}
+							if err := writeJSON(resp); err != nil {
+								slog.Error("websocket write error", "error", err)
+								return
+							}
 
-			if err := conn.WriteJSON(resp); err != nil {
-				slog.Error("websocket write error", "error", err)
-				return
-			}
+							_, summaryErr := b.SummarizeSearchStream(ctx, parsed.Text, details.Results, func(chunk string) error {
+								chunkResp := wsResponse{
+									Intent:      "summary_chunk",
+									Content:     chunk,
+									SurfaceMode: "search",
+								}
+								return writeJSON(chunkResp)
+							})
+
+							if summaryErr != nil {
+								if errors.Is(summaryErr, context.Canceled) || strings.Contains(summaryErr.Error(), "context canceled") {
+									_ = writeJSON(wsResponse{Intent: "canceled", Content: "Operation stopped."})
+									return
+								}
+								slog.Error("summary stream error", "error", summaryErr)
+								_ = writeJSON(wsResponse{
+									Intent:      "summary_chunk",
+									Content:     fmt.Sprintf("\n\n*Error generating summary: %v*", summaryErr),
+									SurfaceMode: "search",
+								})
+							}
+
+							_ = writeJSON(wsResponse{
+								Intent:      "summary_end",
+								SurfaceMode: "search",
+								SummaryDetails: &summaryDetails{
+									ResultCount: len(details.Results),
+								},
+							})
+							return
+						}
+					}
+				} else {
+					var result string
+					var captureInfo *captureDetails
+					var err error
+					result, err = b.Dispatch(ctx, parsed, "web")
+					if err != nil {
+						if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
+							_ = writeJSON(wsResponse{Intent: "canceled", Content: "Operation stopped."})
+							return
+						}
+						result = fmt.Sprintf("Error: %v", err)
+					}
+					resp.Content = result
+					resp.CaptureDetails = captureInfo
+				}
+
+				if err := writeJSON(resp); err != nil {
+					slog.Error("websocket write error", "error", err)
+				}
+			}(ctx, msg, parsed, resp)
 		}
 	}
 }

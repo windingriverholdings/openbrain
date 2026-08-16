@@ -1696,10 +1696,34 @@ function panToNode(n) {
 // ── search panel ─────────────────────────────────────────────────────────────
 const searchInput   = document.getElementById('input');
 const searchSubmit  = document.getElementById('send');
+const stopBtn       = document.getElementById('stop-btn');
 const searchResults = document.getElementById('search-results');
 const searchResultsItems = document.getElementById('search-results-items');
 const closeSearchResultsBtn = document.getElementById('close-search-results');
 const composerEl    = document.getElementById('composer');
+
+let searchAbortController = null;
+
+function setGenerating(generating) {
+  if (generating) {
+    searchSubmit.style.display = 'none';
+    stopBtn.style.display = 'inline-flex';
+    searchInput.readOnly = true;
+  } else {
+    searchSubmit.style.display = 'inline-flex';
+    stopBtn.style.display = 'none';
+    searchInput.readOnly = false;
+    searchSubmit.disabled = !searchInput.value.trim();
+  }
+}
+
+if (stopBtn) {
+  stopBtn.addEventListener('click', () => {
+    if (searchAbortController) {
+      searchAbortController.abort();
+    }
+  });
+}
 const moreOptionsBtn = document.getElementById('more-options-btn');
 const searchOptionsEl = document.getElementById('search-options');
 const searchModeEl  = document.getElementById('search-mode');
@@ -1708,19 +1732,17 @@ const strategyWrapEl = document.getElementById('search-strategy-wrap');
 const searchFromEl = document.getElementById('search-from');
 const searchToEl = document.getElementById('search-to');
 const searchTimeResetEl = document.getElementById('search-time-reset');
-const aiSummarizeEl = document.getElementById('ai-summarize');
-const aiSummarizeWrapEl = document.getElementById('ai-summarize-wrap');
 const toggleSettingsBtn = document.getElementById('toggle-settings');
 const settingsPanelEl = document.getElementById('settings-panel');
 const closeSettingsBtn = document.getElementById('close-settings');
 let surfaceMode = 'search';
-let searchStrategy = 'hybrid';
+let searchStrategy = 'semantic';
 
 try {
   const savedMode = localStorage.getItem('openbrain.surfaceMode');
   if (savedMode === 'search' || savedMode === 'store') surfaceMode = savedMode;
   const savedStrategy = localStorage.getItem('openbrain.searchStrategy');
-  if (savedStrategy === 'vector' || savedStrategy === 'hybrid' || savedStrategy === 'ai') searchStrategy = savedStrategy;
+  if (savedStrategy === 'semantic' || savedStrategy === 'conversational') searchStrategy = savedStrategy;
 } catch (_) { /* storage unavailable */ }
 
 function updateSurfaceMode(mode) {
@@ -1731,13 +1753,11 @@ function updateSurfaceMode(mode) {
   searchModeLabelEl.textContent = isSearch ? 'Search' : 'Store';
   searchInput.placeholder = isSearch ? 'What would you like to find?' : 'What would you like to remember?';
   strategyWrapEl.classList.toggle('visible', isSearch);
-  aiSummarizeWrapEl.classList.toggle('visible', isSearch);
-  aiSummarizeEl.disabled = !isSearch;
   try { localStorage.setItem('openbrain.surfaceMode', surfaceMode); } catch (_) { /* storage unavailable */ }
 }
 
 function setSearchStrategy(mode) {
-  if (mode !== 'vector' && mode !== 'hybrid' && mode !== 'ai') return;
+  if (mode !== 'semantic' && mode !== 'conversational') return;
   searchStrategy = mode;
   strategyWrapEl.querySelectorAll('.strategy-option').forEach(option => {
     option.setAttribute('aria-checked', String(option.dataset.mode === mode));
@@ -1775,9 +1795,6 @@ searchModeEl.addEventListener('click', () => updateSurfaceMode(surfaceMode === '
 strategyWrapEl.querySelectorAll('.strategy-option').forEach(option => {
   option.addEventListener('click', () => setSearchStrategy(option.dataset.mode));
 });
-aiSummarizeEl.addEventListener('click', () => {
-  if (surfaceMode === 'search') aiSummarizeEl.setAttribute('aria-pressed', String(aiSummarizeEl.getAttribute('aria-pressed') !== 'true'));
-});
 
 function clearSearch() {
   highlightedIds = new Set();
@@ -1798,9 +1815,21 @@ async function runSearch() {
   const q = searchInput.value.trim();
   if (!q) return;
 
+  if (searchStrategy === 'conversational') {
+    const params = new URLSearchParams(location.search);
+    params.set('conversation', q);
+    window.location.assign('/?' + params.toString());
+    return;
+  }
+
+  if (searchAbortController) {
+    searchAbortController.abort();
+  }
+  searchAbortController = new AbortController();
+
   searchResults.classList.add('visible');
   searchResultsItems.innerHTML = '<p class="search-empty">Searching…</p>';
-  searchSubmit.disabled = true;
+  setGenerating(true);
 
   try {
     const isFullRange = !dataDateMin || (dateMin <= dataDateMin && dateMax >= dataDateMax);
@@ -1809,10 +1838,9 @@ async function runSearch() {
     else if (!isFullRange) searchURL += '&from=' + encodeURIComponent(fmtDate(dateMin));
     if (searchToEl.value) searchURL += '&to=' + encodeURIComponent(searchToEl.value);
     else if (!isFullRange) searchURL += '&to=' + encodeURIComponent(fmtDate(dateMax));
-    if (searchStrategy === 'vector') searchURL += '&mode=vector';
     const token = new URLSearchParams(location.search).get('token') || '';
     if (token) searchURL += '&token=' + encodeURIComponent(token);
-    const res = await fetch(searchURL);
+    const res = await fetch(searchURL, { signal: searchAbortController.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const rows = await res.json();
 
@@ -1866,9 +1894,14 @@ async function runSearch() {
     });
 
   } catch (err) {
+    if (err.name === 'AbortError') {
+      searchResultsItems.innerHTML = '<p class="search-empty">Search canceled.</p>';
+      return;
+    }
     searchResultsItems.innerHTML = `<p class="search-empty" style="color:var(--red)">Error: ${esc(err.message)}</p>`;
   } finally {
-    searchSubmit.disabled = !searchInput.value.trim();
+    searchAbortController = null;
+    setGenerating(false);
   }
 }
 
@@ -1896,22 +1929,34 @@ searchInput.addEventListener('input', () => {
 async function captureThought() {
   const content = searchInput.value.trim();
   if (!content) return;
-  searchSubmit.disabled = true;
+
+  if (searchAbortController) {
+    searchAbortController.abort();
+  }
+  searchAbortController = new AbortController();
+
+  setGenerating(true);
   try {
     const token = new URLSearchParams(location.search).get('token') || '';
     const response = await fetch('/api/capture' + (token ? '?token=' + encodeURIComponent(token) : ''), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
+      signal: searchAbortController.signal
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     searchInput.value = '';
     searchInput.style.height = 'auto';
     await loadData(true);
   } catch (err) {
+    if (err.name === 'AbortError') {
+      searchResultsItems.innerHTML = '<p class="search-empty">Capture canceled.</p>';
+      return;
+    }
     searchResultsItems.innerHTML = `<p class="search-empty" style="color:var(--red)">Error: ${esc(err.message)}</p>`;
   } finally {
-    searchSubmit.disabled = !searchInput.value.trim();
+    searchAbortController = null;
+    setGenerating(false);
   }
 }
 

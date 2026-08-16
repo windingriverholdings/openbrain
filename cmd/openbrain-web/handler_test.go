@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -231,4 +232,66 @@ func TestWsHandler_ResponseFormat(t *testing.T) {
 	assert.NotNil(t, raw["intent"], "response must include 'intent' field")
 	assert.NotNil(t, raw["thought_type"], "response must include 'thought_type' field")
 	assert.Nil(t, raw["response"], "response must NOT include old 'response' field")
+}
+
+type mockBlockingEmbedder struct {
+	startBlock chan struct{}
+}
+
+func (m *mockBlockingEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	if m.startBlock != nil {
+		close(m.startBlock)
+		m.startBlock = nil // prevent double close
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (m *mockBlockingEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return nil, nil
+}
+
+func (m *mockBlockingEmbedder) Dimension() int {
+	return 384
+}
+
+func TestWsHandler_Cancellation(t *testing.T) {
+	startChan := make(chan struct{})
+	emb := &mockBlockingEmbedder{startBlock: startChan}
+	b := brain.New(nil, emb, nil)
+
+	upgrader := newUpgrader("")
+	handler := wsHandler(b, upgrader, "")
+
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Send message to trigger capture (which will block on Embed)
+	err = conn.WriteJSON(wsMessage{Message: "Some memory", Intent: "capture"})
+	require.NoError(t, err)
+
+	// Wait for Embed to be entered
+	<-startChan
+
+	// Send cancel message
+	err = conn.WriteJSON(wsMessage{Type: "cancel"})
+	require.NoError(t, err)
+
+	// Read reply, we expect to see "canceled" intent
+	_, rawMsg, err := conn.ReadMessage()
+	require.NoError(t, err)
+
+	var resp wsResponse
+	err = json.Unmarshal(rawMsg, &resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, "canceled", resp.Intent)
+	assert.Equal(t, "Operation stopped.", resp.Content)
 }

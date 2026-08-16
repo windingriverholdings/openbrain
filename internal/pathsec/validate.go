@@ -4,6 +4,7 @@ package pathsec
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -41,20 +42,10 @@ func ValidateIngestPath(path, allowedDir string) error {
 		return fmt.Errorf("cannot resolve allowed directory: %w", err)
 	}
 
-	// Quick prefix check before attempting symlink resolution
-	if !strings.HasPrefix(cleaned, allowedResolved+string(filepath.Separator)) && cleaned != allowedResolved {
-		return fmt.Errorf("path outside allowed ingestion directory")
-	}
-
-	// Resolve symlinks to get the real path (catches symlink escapes)
-	resolved, err := filepath.EvalSymlinks(cleaned)
+	// Resolve symlinks on the cleaned path, walking up ancestors if parts do not exist
+	resolved, err := resolveSymlinks(cleaned)
 	if err != nil {
-		// If file doesn't exist, resolve the parent directory
-		resolved, err = filepath.EvalSymlinks(filepath.Dir(cleaned))
-		if err != nil {
-			return fmt.Errorf("cannot resolve path: %w", err)
-		}
-		resolved = filepath.Join(resolved, filepath.Base(cleaned))
+		return fmt.Errorf("cannot resolve path: %w", err)
 	}
 
 	// Final check: resolved path must still be within allowed directory
@@ -63,4 +54,27 @@ func ValidateIngestPath(path, allowedDir string) error {
 	}
 
 	return nil
+}
+
+func resolveSymlinks(p string) (string, error) {
+	var parts []string
+	curr := p
+	for {
+		resolved, err := filepath.EvalSymlinks(curr)
+		if err == nil {
+			for i := len(parts) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, parts[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(curr)
+		if parent == curr {
+			return p, nil
+		}
+		parts = append(parts, filepath.Base(curr))
+		curr = parent
+	}
 }

@@ -49,6 +49,62 @@ func TestSummarizeSearchReturnsProviderError(t *testing.T) {
 	assert.EqualError(t, err, "model unavailable")
 }
 
+type testStreamSummarizer struct {
+	testSummarizer
+	chunks []string
+}
+
+func (s *testStreamSummarizer) StreamSummarize(_ context.Context, query string, rows []model.ThoughtRow, onChunk func(string) error) (string, error) {
+	s.query = query
+	s.rows = rows
+	if s.err != nil {
+		return "", s.err
+	}
+	for _, chunk := range s.chunks {
+		if err := onChunk(chunk); err != nil {
+			return "", err
+		}
+	}
+	return s.text, nil
+}
+
+func TestSummarizeSearchStream_SupportsStreaming(t *testing.T) {
+	provider := &testStreamSummarizer{
+		testSummarizer: testSummarizer{text: "Complete text"},
+		chunks:         []string{"Comp", "lete", " text"},
+	}
+	b := &Brain{}
+	b.SetSummarizerForTesting(provider)
+
+	var received []string
+	onChunk := func(chunk string) error {
+		received = append(received, chunk)
+		return nil
+	}
+
+	got, err := b.SummarizeSearchStream(context.Background(), "query", []model.ThoughtRow{{ID: "one"}}, onChunk)
+	assert.NoError(t, err)
+	assert.Equal(t, "Complete text", got.Summary)
+	assert.Equal(t, []string{"Comp", "lete", " text"}, received)
+}
+
+func TestSummarizeSearchStream_Fallback(t *testing.T) {
+	provider := &testSummarizer{text: "Standard text"}
+	b := &Brain{}
+	b.SetSummarizerForTesting(provider)
+
+	var received []string
+	onChunk := func(chunk string) error {
+		received = append(received, chunk)
+		return nil
+	}
+
+	got, err := b.SummarizeSearchStream(context.Background(), "query", []model.ThoughtRow{{ID: "one"}}, onChunk)
+	assert.NoError(t, err)
+	assert.Equal(t, "Standard text", got.Summary)
+	assert.Equal(t, []string{"Standard text"}, received)
+}
+
 func TestSearchOptsDefaults(t *testing.T) {
 	opts := SearchOpts{}
 	assert.Equal(t, "", opts.Mode)

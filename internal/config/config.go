@@ -83,7 +83,51 @@ type Config struct {
 	SearchFilteredThreshold float64       `env:"OPENBRAIN_SEARCH_FILTERED_THRESHOLD" envDefault:"0.01"`
 	SearchAssistedModel     string        `env:"OPENBRAIN_SEARCH_ASSISTED_MODEL"`
 	SearchSummaryModel      string        `env:"OPENBRAIN_SEARCH_SUMMARY_MODEL"`
-	SearchAgentTimeout      time.Duration `env:"OPENBRAIN_SEARCH_AGENT_TIMEOUT" envDefault:"30s"`
+	SearchAgentTimeout      time.Duration `env:"OPENBRAIN_SEARCH_AGENT_TIMEOUT" envDefault:"90s"`
+
+	// Conversational search.
+	//
+	// These knobs exist because local models are small and the host is
+	// memory-constrained. A conversational answer costs one model load plus one
+	// prompt ingest plus one generation, and on a 16 GB machine an 8 GB model
+	// cannot stay resident alongside the embedder: every alternation between
+	// embedding and generation evicts and reloads it. The defaults below are
+	// tuned to keep the whole exchange to two LLM calls against a small model
+	// that coexists with the embedder, so nothing is ever evicted mid-answer.
+	//
+	// ConverseModel takes precedence over the SearchSummaryModel /
+	// SearchAssistedModel / ExtractModel fallback chain, so conversation model
+	// choice is independent of extraction model choice.
+	ConverseModel string `env:"OPENBRAIN_CONVERSE_MODEL"`
+	// ConverseRewriteModel optionally uses a smaller model for query rewriting
+	// than for the final answer. Empty means reuse the answer model, which is
+	// usually correct: a second model means a second load.
+	ConverseRewriteModel string `env:"OPENBRAIN_CONVERSE_REWRITE_MODEL"`
+	// ConverseMaxNotes caps how many notes are fed to the answer prompt.
+	ConverseMaxNotes int `env:"OPENBRAIN_CONVERSE_MAX_NOTES" envDefault:"8"`
+	// ConversePromptTokens is the aggregate token budget for the notes block.
+	// Prompt ingestion is superlinear in practice; a 28k-token prompt takes
+	// over a minute on a 4B model, so this must stay well under num_ctx.
+	ConversePromptTokens int `env:"OPENBRAIN_CONVERSE_PROMPT_TOKENS" envDefault:"3000"`
+	// ConverseNumCtx is sent to Ollama as options.num_ctx. Without it Ollama
+	// silently truncates at the model default (often 4096), which drops the
+	// leading notes and invalidates the [n] citation numbering.
+	ConverseNumCtx int `env:"OPENBRAIN_CONVERSE_NUM_CTX" envDefault:"8192"`
+	// ConverseMaxRounds bounds retrieval rounds. The default of 1 means purely
+	// deterministic retrieval with no LLM sufficiency gate. Raise it only on a
+	// host with enough memory to keep the model resident.
+	ConverseMaxRounds int `env:"OPENBRAIN_CONVERSE_MAX_ROUNDS" envDefault:"1"`
+	// ConverseKeepAlive is sent as keep_alive so the model stays resident
+	// between the rewrite call and the answer call, avoiding a second load.
+	ConverseKeepAlive time.Duration `env:"OPENBRAIN_CONVERSE_KEEP_ALIVE" envDefault:"30m"`
+	// ConverseRewriteTimeout and ConverseAnswerTimeout are per-call budgets. A
+	// slow rewrite must not consume the answer's time, which is what a single
+	// whole-loop deadline allows.
+	ConverseRewriteTimeout time.Duration `env:"OPENBRAIN_CONVERSE_REWRITE_TIMEOUT" envDefault:"25s"`
+	ConverseAnswerTimeout  time.Duration `env:"OPENBRAIN_CONVERSE_ANSWER_TIMEOUT" envDefault:"90s"`
+	// ConverseWarmModel issues a 1-token generation at startup so the first
+	// real question does not pay the cold-load cost.
+	ConverseWarmModel bool `env:"OPENBRAIN_CONVERSE_WARM_MODEL" envDefault:"false"`
 
 	// Telegram
 	TelegramBotToken      string `env:"OPENBRAIN_TELEGRAM_BOT_TOKEN"`

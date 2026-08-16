@@ -40,7 +40,7 @@ func TestGraphPageDoesNotAutoGenerateMap(t *testing.T) {
 	assert.Contains(t, composer, `id="search-options"`)
 	assert.Contains(t, composer, `id="search-strategy-wrap"`)
 	assert.NotContains(t, page, `id="search-time-wrap"`)
-	assert.Contains(t, composer, `id="ai-summarize"`)
+	assert.Contains(t, composer, `data-mode="conversational"`)
 	assert.Contains(t, composerCSS, "position: fixed; right: 0; bottom: 0; left: 0")
 	assert.NotContains(t, page, `id="search-panel"`)
 	assert.NotContains(t, page, `id="search-panel-header"`)

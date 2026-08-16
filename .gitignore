@@ -41,5 +41,14 @@ viz/brain/brain.html
 # VS Code workspace files
 *.code-workspace
 
+# Local untracked notes and plans
+*.local.md
+.plans/
+
+# OS and temporary assets
+.DS_Store
+*.png
+*.progress.json
+
 # macOS launchd plists (deploy-specific, not tracked)
 deploy/*.plist

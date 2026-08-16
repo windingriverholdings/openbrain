@@ -6,9 +6,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/windingriverholdings/openbrain/internal/config"
+	"github.com/windingriverholdings/openbrain/internal/converse"
 	"github.com/windingriverholdings/openbrain/internal/db"
 	"github.com/windingriverholdings/openbrain/internal/embeddings"
 	"github.com/windingriverholdings/openbrain/internal/extract"
@@ -23,7 +24,6 @@ import (
 	"github.com/windingriverholdings/openbrain/internal/model"
 	"github.com/windingriverholdings/openbrain/internal/queryexpand"
 	"github.com/windingriverholdings/openbrain/internal/rankfuse"
-	"github.com/windingriverholdings/openbrain/internal/searchplan"
 	"github.com/windingriverholdings/openbrain/internal/summarize"
 )
 
@@ -34,7 +34,7 @@ type Brain struct {
 	cfg        *config.Config
 	summarizer summarize.Provider
 	expander   queryexpand.Provider
-	planner    searchplan.Planner
+	converser  converse.Provider
 
 	// extractFn and captureFn are seams over the LLM extraction call and the
 	// single-note fallback capture, defaulted in New to the real
@@ -81,10 +81,37 @@ func New(pool *pgxpool.Pool, embedder embeddings.Embedder, cfg *config.Config) *
 	} else {
 		slog.Warn("contextual search expansion unavailable", "error", err)
 	}
-	if planner, err := searchplan.NewPlanner(cfg); err == nil {
-		b.planner = planner
+	if converser, err := converse.New(cfg); err == nil {
+		b.converser = converser
+		// Verify the model exists now rather than discovering it mid-question.
+		// A model named in config but never pulled is a common misconfiguration
+		// and otherwise surfaces only as an opaque failure on first use.
+		if pf, ok := converser.(interface {
+			Preflight(context.Context) error
+		}); ok {
+			pfCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if pfErr := pf.Preflight(pfCtx); pfErr != nil {
+				slog.Warn("conversational model preflight failed", "error", pfErr)
+			}
+			cancel()
+		}
+		if cfg != nil && cfg.ConverseWarmModel {
+			if w, ok := converser.(interface {
+				Warm(context.Context) error
+			}); ok {
+				go func() {
+					warmCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+					defer cancel()
+					if warmErr := w.Warm(warmCtx); warmErr != nil {
+						slog.Warn("conversational model warm-up failed", "error", warmErr)
+					} else {
+						slog.Info("conversational model warmed")
+					}
+				}()
+			}
+		}
 	} else {
-		slog.Warn("AI Search unavailable", "error", err)
+		slog.Warn("conversational search unavailable", "error", err)
 	}
 	b.extractFn = extract.ExtractThoughts
 	b.captureFn = b.Capture
@@ -149,10 +176,306 @@ func (b *Brain) SetQueryExpanderForTesting(provider queryexpand.Provider) {
 	b.expander = provider
 }
 
-// SetSearchPlannerForTesting injects a deterministic AI Search planner.
-func (b *Brain) SetSearchPlannerForTesting(planner searchplan.Planner) {
-	b.planner = planner
+// SetConverserForTesting injects a deterministic conversational provider.
+func (b *Brain) SetConverserForTesting(provider converse.Provider) {
+	b.converser = provider
 }
+
+// ConversationDetails contains the grounded answer and every note read by it.
+type ConversationDetails struct {
+	Answer string
+	// Sources are the notes the answer actually cited, in citation order, so
+	// bracket number N in Answer indexes Sources[N-1].
+	Sources []model.ThoughtRow
+	// NotesRead is how many notes were retrieved and shown to the model, which
+	// is >= len(Sources) whenever the model cited only a subset.
+	NotesRead    int
+	SearchRounds int
+	// SearchQuery is the rewritten retrieval query, surfaced for transparency.
+	SearchQuery string
+}
+
+// ConverseSearch answers a question from OpenBrain notes.
+//
+// The pipeline is deliberately only two LLM calls: rewrite the question into a
+// retrieval query, then answer from the retrieved notes. Retrieval breadth in
+// between is decided deterministically.
+//
+// This replaced an agentic loop that asked the model after every batch of three
+// notes whether it had enough context. That gate was the most expensive call in
+// the loop and produced no usable signal: small local models reported
+// insufficiency almost unconditionally, so every round ran regardless, and the
+// repeated alternation between embedding and generation evicted the generation
+// model from memory on hosts that cannot hold both, adding a 7-18 s reload per
+// round. Fusing several retrieval axes once gives better recall than three
+// notes at a time, at a fraction of the latency.
+func (b *Brain) ConverseSearch(ctx context.Context, query string, opts SearchOpts, onChunk func(string) error, onStatus func(string) error) (ConversationDetails, error) {
+	if err := requireNonEmptyText("conversation", query); err != nil {
+		return ConversationDetails{}, err
+	}
+	if b.converser == nil {
+		return ConversationDetails{}, fmt.Errorf("conversational search is unavailable: configure a local LLM model via OPENBRAIN_CONVERSE_MODEL")
+	}
+	// Backstop only. Each LLM call enforces its own tighter budget inside the
+	// converse package, so one slow step cannot starve the others.
+	if b.cfg != nil && b.cfg.SearchAgentTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, b.cfg.SearchAgentTimeout)
+		defer cancel()
+	}
+
+	status := func(msg string) error {
+		if onStatus == nil {
+			return nil
+		}
+		return onStatus(msg)
+	}
+
+	if err := status("Understanding what to look for..."); err != nil {
+		return ConversationDetails{}, err
+	}
+
+	// A failed rewrite is recoverable: the raw question is a serviceable
+	// retrieval query. Previously this aborted the whole conversation, so a
+	// chatty model reply turned into a user-visible error.
+	searchQuery, err := b.converser.UnderstandQuery(ctx, query)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return ConversationDetails{}, err
+		}
+		slog.Warn("conversational query rewrite failed; using raw question", "error", err)
+		searchQuery = strings.TrimSpace(query)
+	}
+
+	if err := status(fmt.Sprintf("Searching your brain for %q...", searchQuery)); err != nil {
+		return ConversationDetails{}, err
+	}
+
+	maxNotes := b.converseMaxNotes()
+	notes, rounds, err := b.converseRetrieve(ctx, query, searchQuery, opts, maxNotes, status)
+	if err != nil {
+		return ConversationDetails{}, err
+	}
+	if len(notes) == 0 {
+		return ConversationDetails{
+			Answer:      "I couldn't find any notes that answer that in your brain.",
+			SearchQuery: searchQuery,
+		}, nil
+	}
+
+	if err := status(fmt.Sprintf("Reading %d relevant note%s...", len(notes), plural(len(notes)))); err != nil {
+		return ConversationDetails{}, err
+	}
+	if err := status("Writing a grounded answer..."); err != nil {
+		return ConversationDetails{}, err
+	}
+
+	answer, err := b.converser.StreamAnswer(ctx, query, searchQuery, notes, onChunk)
+	if err != nil {
+		return ConversationDetails{}, err
+	}
+
+	// Reconcile the answer's [n] markers with the notes supplied: drop
+	// unresolvable indices and narrow Sources to what was actually cited.
+	verified, sources := converse.VerifyCitations(answer, notes)
+
+	return ConversationDetails{
+		Answer:       verified,
+		Sources:      sources,
+		NotesRead:    len(notes),
+		SearchRounds: rounds,
+		SearchQuery:  searchQuery,
+	}, nil
+}
+
+// converseRetrieve gathers grounding notes for a conversation.
+//
+// It fuses three retrieval axes by reciprocal rank rather than reading raw
+// hybrid scores, for the same reason assistedSearch does: full-text rank
+// (~0.05-0.3) and cosine similarity (~0.5-0.8) are not comparable magnitudes,
+// so any weighted sum lets semantic similarity bury exact matches on rare
+// terms like project codenames. Questions about a specific named thing are
+// precisely the case conversational search must not fumble.
+//
+// The query is embedded once and reused. The previous implementation
+// re-embedded the identical string on every round, which was both wasted work
+// and, on memory-constrained hosts, the trigger for evicting the generation
+// model between rounds.
+func (b *Brain) converseRetrieve(ctx context.Context, question, searchQuery string, opts SearchOpts, maxNotes int, status func(string) error) ([]model.ThoughtRow, int, error) {
+	filteredThresh := b.cfg.SearchFilteredThreshold
+	if filteredThresh == 0 {
+		filteredThresh = filteredSearchMinThreshold
+	}
+	threshold := effectiveThreshold(b.cfg.SearchScoreThreshold, filteredThresh, opts)
+
+	embedding, err := b.embedder.Embed(ctx, searchQuery)
+	if err != nil {
+		return nil, 0, fmt.Errorf("embed conversational search query: %w", err)
+	}
+
+	// Over-fetch per axis so fusion has enough candidates to reorder; the
+	// score-gap cutoff below trims back to what is actually relevant.
+	fetchK := maxNotes * 3
+
+	collected := make([]model.ThoughtRow, 0, maxNotes)
+	seen := make(map[string]bool)
+	rounds := 0
+	maxRounds := b.converseMaxRounds()
+
+	for rounds < maxRounds {
+		excluded := make([]string, 0, len(seen))
+		for id := range seen {
+			excluded = append(excluded, id)
+		}
+
+		hybrid, err := db.HybridSearchThoughtsExcluding(ctx, b.pool, searchQuery, embedding, fetchK,
+			converseKeywordWeight, converseSemanticWeight, threshold, opts.IncludeHistory,
+			opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo, b.cfg.EmbeddingDim, excluded)
+		if err != nil {
+			return nil, rounds, err
+		}
+
+		// Lexical axes run against both the rewritten query and the original
+		// question. The rewrite can drop a term that mattered, so keeping the
+		// user's own words as an axis is a cheap hedge against a bad rewrite.
+		lexicalRewritten, lexErr := db.KeywordSearchThoughts(ctx, b.pool, searchQuery, fetchK,
+			opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
+		if lexErr != nil {
+			slog.Warn("conversational lexical axis failed", "error", lexErr, "axis", "rewritten")
+			lexicalRewritten = nil
+		}
+		lexicalOriginal, origErr := db.KeywordSearchThoughts(ctx, b.pool, question, fetchK,
+			opts.IncludeHistory, opts.ThoughtType, opts.CreatedFrom, opts.CreatedTo)
+		if origErr != nil {
+			slog.Warn("conversational lexical axis failed", "error", origErr, "axis", "original")
+			lexicalOriginal = nil
+		}
+
+		fused := rankfuse.FuseRRF(b.rrfK(),
+			filterSeen(hybrid, seen),
+			filterSeen(lexicalRewritten, seen),
+			filterSeen(lexicalOriginal, seen),
+		)
+		if len(fused) == 0 {
+			break
+		}
+
+		room := maxNotes - len(collected)
+		for _, row := range applyScoreGapCutoff(fused, room) {
+			collected = append(collected, row)
+			seen[row.ID] = true
+		}
+		rounds++
+
+		if len(collected) >= maxNotes || rounds >= maxRounds {
+			break
+		}
+
+		// Only consult the model gate when more than one round is permitted.
+		// At the default of one round no gate call is made at all.
+		gater, ok := b.converser.(converse.Gater)
+		if !ok {
+			break
+		}
+		enough, gateErr := gater.SufficiencyGate(ctx, question, searchQuery, collected)
+		if gateErr != nil {
+			if errors.Is(gateErr, context.Canceled) {
+				return nil, rounds, gateErr
+			}
+			slog.Warn("conversational sufficiency gate failed; answering with current notes", "error", gateErr)
+			break
+		}
+		if enough {
+			break
+		}
+		if err := status("I need a little more context from your brain..."); err != nil {
+			return nil, rounds, err
+		}
+	}
+
+	return collected, rounds, nil
+}
+
+// filterSeen drops rows already collected in an earlier round. Hybrid search
+// can exclude by ID server-side, but the keyword axes cannot, so fusion inputs
+// are filtered uniformly here.
+func filterSeen(rows []model.ThoughtRow, seen map[string]bool) []model.ThoughtRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]model.ThoughtRow, 0, len(rows))
+	for _, row := range rows {
+		if !seen[row.ID] {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// applyScoreGapCutoff keeps the leading run of results and stops at the first
+// sharp relevance drop, bounded by limit.
+//
+// A fixed top-K is wrong in both directions: it pads a narrow question with
+// irrelevant notes (which dilutes the answer and wastes the prompt budget) and
+// truncates a broad one. Cutting at a relative gap adapts to the shape of the
+// result set without needing a model call to decide.
+func applyScoreGapCutoff(rows []model.ThoughtRow, limit int) []model.ThoughtRow {
+	if limit <= 0 || len(rows) == 0 {
+		return nil
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	// Always keep at least the top two when available; a single note is rarely
+	// enough to notice a contradiction.
+	if len(rows) <= converseMinNotes {
+		return rows
+	}
+	top := rowScore(rows[0])
+	if top <= 0 {
+		return rows
+	}
+	for i := converseMinNotes; i < len(rows); i++ {
+		if rowScore(rows[i]) < top*converseScoreGapRatio {
+			return rows[:i]
+		}
+	}
+	return rows
+}
+
+func rowScore(row model.ThoughtRow) float64 {
+	if row.Score == nil {
+		return 0
+	}
+	return *row.Score
+}
+
+func (b *Brain) converseMaxNotes() int {
+	if b.cfg != nil && b.cfg.ConverseMaxNotes > 0 {
+		return b.cfg.ConverseMaxNotes
+	}
+	return defaultConverseMaxNotes
+}
+
+func (b *Brain) converseMaxRounds() int {
+	if b.cfg != nil && b.cfg.ConverseMaxRounds > 0 {
+		return b.cfg.ConverseMaxRounds
+	}
+	return 1
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// AmbiguousPrompt is the plain-text disambiguation reply Dispatch returns for
+// intent.Ambiguous. It mirrors the wording of the web UI's search/capture
+// choice card (cmd/openbrain-web/handler.go) for callers that render plain
+// text rather than an interactive card: the CLI, Telegram, and Slack.
+const AmbiguousPrompt = "That looks like it could be a search or a note to save. Say `find: ...` to search, or `note: ...` to save it."
 
 // Dispatch routes a parsed intent to the appropriate handler.
 func (b *Brain) Dispatch(ctx context.Context, parsed intent.ParsedIntent, source string) (string, error) {
@@ -168,10 +491,14 @@ func (b *Brain) Dispatch(ctx context.Context, parsed intent.ParsedIntent, source
 	case intent.Search:
 		return b.formatSearch(ctx, parsed.Text, SearchOpts{Mode: "hybrid"})
 	case intent.Ambiguous:
-		// Non-interactive callers cannot ask the user to choose. Search is
-		// the safe default because it is read-only; the web UI presents the
-		// explicit capture/search choice instead.
-		return b.formatSearch(ctx, parsed.Text, SearchOpts{Mode: "hybrid"})
+		// The web UI never reaches this branch: its websocket handler
+		// intercepts intent.Ambiguous before calling Dispatch and shows an
+		// interactive search/capture choice card instead. Every other
+		// Dispatch caller (CLI, Telegram, Slack) has no way to present that
+		// choice, so guessing either direction is wrong: silently searching
+		// discards a note the user meant to save, and silently capturing
+		// writes a search query as a thought. Ask explicitly instead.
+		return AmbiguousPrompt, nil
 	case intent.Supersede:
 		return b.Supersede(ctx, parsed, source)
 	case intent.Extract:
@@ -235,9 +562,10 @@ type CaptureDetails struct {
 // work performed. AxesUsed names the independent retrieval strategies whose
 // rankings were fused, and is populated only for assisted searches.
 type SearchDetails struct {
-	Results   []model.ThoughtRow
-	AxesUsed  []string
-	Expansion *SearchExpansion
+	Results      []model.ThoughtRow
+	AxesUsed     []string
+	Expansion    *SearchExpansion
+	AIReferences []model.ThoughtRow
 }
 
 // SearchExpansion records the model's grounded interpretation of an assisted
@@ -271,6 +599,31 @@ func (b *Brain) SummarizeSearch(ctx context.Context, query string, results []mod
 	return details, nil
 }
 
+// SummarizeSearchStream streams read-only summaries of search results.
+func (b *Brain) SummarizeSearchStream(ctx context.Context, query string, results []model.ThoughtRow, onChunk func(string) error) (SummaryDetails, error) {
+	if b.summarizer == nil {
+		return SummaryDetails{}, fmt.Errorf("search summarization is unavailable: configure a local LLM model")
+	}
+	var text string
+	var err error
+	if streamer, ok := b.summarizer.(summarize.StreamProvider); ok {
+		text, err = streamer.StreamSummarize(ctx, query, results, onChunk)
+	} else {
+		text, err = b.summarizer.Summarize(ctx, query, results)
+		if err == nil {
+			_ = onChunk(text)
+		}
+	}
+	if err != nil {
+		return SummaryDetails{}, err
+	}
+	details := SummaryDetails{Summary: text, ResultCount: len(results)}
+	if named, ok := b.summarizer.(summarize.ModelNamer); ok {
+		details.ModelUsed = named.ModelName()
+	}
+	return details, nil
+}
+
 // filteredSearchMinThreshold is the default minimum score threshold used when
 // a type filter is applied, since filtered searches on small corpora need more
 // lenient scoring than unfiltered searches.
@@ -279,6 +632,31 @@ const filteredSearchMinThreshold = 0.01
 // defaultSearchTopK is the last-resort row cap when configuration supplies no
 // value, so a zero-valued config can never silently return no rows.
 const defaultSearchTopK = 10
+
+// Conversational retrieval tuning.
+const (
+	// defaultConverseMaxNotes caps grounding notes when config supplies none.
+	// Eight notes at the default prompt budget keeps prompt ingestion, which
+	// dominates latency on small local models, to a few seconds.
+	defaultConverseMaxNotes = 8
+
+	// converseMinNotes is the floor the score-gap cutoff will not trim below.
+	// Answering from a single note cannot surface a contradiction between
+	// notes, which is a stated requirement of the conversational system prompt.
+	converseMinNotes = 2
+
+	// converseScoreGapRatio ends the result run at the first note scoring below
+	// this fraction of the top note. Tuned to be permissive: dropping a
+	// relevant note is worse than including a marginal one, because a missing
+	// note cannot be cited at all.
+	converseScoreGapRatio = 0.45
+
+	// Hybrid weights for conversational retrieval. These match the values used
+	// elsewhere; conversational results are additionally rank-fused, so the
+	// weights only order the candidate pool feeding fusion.
+	converseKeywordWeight  = 0.3
+	converseSemanticWeight = 0.7
+)
 
 // effectiveThreshold returns a lowered score threshold when a type filter
 // is applied, since filtered searches on small corpora need more lenient scoring.
@@ -343,17 +721,23 @@ func (b *Brain) SearchWithDetails(ctx context.Context, query string, opts Search
 	}
 }
 
-// AISearchDetails contains the final rows and the safe searches the planner
-// requested. The trace is intended for the UI so users can inspect AI Search.
-type AISearchDetails struct {
-	Results []model.ThoughtRow
-	Steps   []searchplan.Step
+func (b *Brain) aiSearch(ctx context.Context, query string, opts SearchOpts, threshold float64) (SearchDetails, error) {
+	return b.aiSearchWithRefinement(ctx, query, opts, threshold, nil, nil)
 }
 
-func (b *Brain) aiSearch(ctx context.Context, query string, opts SearchOpts, threshold float64) (SearchDetails, error) {
-	if b.planner == nil {
-		return SearchDetails{}, fmt.Errorf("AI Search is unavailable: configure a local LLM model")
+// AISearchStream performs a Fast/vector probe, streams a note-grounded local
+// model interpretation, then uses its refined semantic query for the final
+// Fast/vector search. The model cannot select retrieval modes or filters.
+func (b *Brain) AISearchStream(ctx context.Context, query string, opts SearchOpts, onChunk func(string) error, onStatus func(string) error) (SearchDetails, error) {
+	filteredThresh := b.cfg.SearchFilteredThreshold
+	if filteredThresh == 0 {
+		filteredThresh = filteredSearchMinThreshold
 	}
+	threshold := effectiveThreshold(b.cfg.SearchScoreThreshold, filteredThresh, opts)
+	return b.aiSearchWithRefinement(ctx, query, opts, threshold, onChunk, onStatus)
+}
+
+func (b *Brain) aiSearchWithRefinement(ctx context.Context, query string, opts SearchOpts, threshold float64, onChunk func(string) error, onStatus func(string) error) (SearchDetails, error) {
 	if b.cfg != nil {
 		if timeout := b.cfg.SearchAgentTimeout; timeout > 0 {
 			var cancel context.CancelFunc
@@ -361,59 +745,54 @@ func (b *Brain) aiSearch(ctx context.Context, query string, opts SearchOpts, thr
 			defer cancel()
 		}
 	}
-	plan, err := b.planner.Plan(ctx, query)
-	if err != nil {
-		return SearchDetails{}, err
+
+	vectorOpts := opts
+	vectorOpts.Mode = "vector"
+	vectorOpts.Tags = nil
+	vectorOpts.ThoughtType = ""
+	probeK := 3
+	probeOpts := vectorOpts
+	probeOpts.TopK = probeK
+	probe, err := b.SearchWithDetails(ctx, query, probeOpts)
+	if err != nil || len(probe.Results) == 0 || b.expander == nil {
+		return SearchDetails{Results: probe.Results, AxesUsed: []string{"fast semantic probe"}, AIReferences: probe.Results}, err
 	}
-	rowsByID := make(map[string]model.ThoughtRow)
-	steps := make([]searchplan.Step, 0, len(plan.Steps))
-	for _, step := range plan.Steps {
-		searchOpts := opts
-		searchOpts.Mode = step.Mode
-		searchOpts.ThoughtType = step.ThoughtType
-		searchOpts.Tags = step.Tags
-		searchOpts.IncludeHistory = step.IncludeHistory
-		searchOpts.TopK = step.TopK
-		details, searchErr := b.SearchWithDetails(ctx, step.Query, searchOpts)
-		if searchErr != nil {
-			continue
-		}
-		steps = append(steps, step)
-		for _, row := range details.Results {
-			rowsByID[row.ID] = row
+	if onStatus != nil {
+		if err := onStatus("Reading the three closest notes to understand what you mean..."); err != nil {
+			return SearchDetails{}, err
 		}
 	}
-	if len(steps) == 0 {
-		return SearchDetails{}, fmt.Errorf("AI Search could not complete any safe search")
-	}
-	rows := make([]model.ThoughtRow, 0, len(rowsByID))
-	for _, row := range rowsByID {
-		rows = append(rows, row)
-	}
-	// Keep output deterministic even though rowsByID is intentionally used for
-	// deduplication.
-	sort.SliceStable(rows, func(i, j int) bool {
-		left, right := 0.0, 0.0
-		if rows[i].Score != nil {
-			left = *rows[i].Score
+
+	var expansion queryexpand.Result
+	if onChunk != nil {
+		if streamer, ok := b.expander.(queryexpand.StreamProvider); ok {
+			expansion, err = streamer.StreamExpand(ctx, query, probe.Results, onChunk)
+		} else {
+			expansion, err = b.expander.Expand(ctx, query, probe.Results)
 		}
-		if rows[j].Score != nil {
-			right = *rows[j].Score
-		}
-		if left != right {
-			return left > right
-		}
-		return rows[i].ID < rows[j].ID
-	})
-	topK := b.resolveTopK(opts)
-	if len(rows) > topK {
-		rows = rows[:topK]
+	} else {
+		expansion, err = b.expander.Expand(ctx, query, probe.Results)
 	}
-	names := make([]string, 0, len(steps))
-	for _, step := range steps {
-		names = append(names, step.Mode+": "+step.Query)
+	if err != nil || !expansion.UseExpansion || len(expansion.ExpandedTerms) == 0 {
+		return SearchDetails{Results: probe.Results, AxesUsed: []string{"fast semantic probe"}, AIReferences: probe.Results}, nil
 	}
-	return SearchDetails{Results: rows, AxesUsed: names}, nil
+
+	refinedQuery := expansion.ExpandedTerms[0]
+	if onStatus != nil {
+		if err := onStatus("Searching again with that grounded interpretation..."); err != nil {
+			return SearchDetails{}, err
+		}
+	}
+	final, searchErr := b.SearchWithDetails(ctx, refinedQuery, vectorOpts)
+	if searchErr != nil {
+		return SearchDetails{Results: probe.Results, AxesUsed: []string{"fast semantic probe"}, AIReferences: probe.Results}, nil
+	}
+	return SearchDetails{
+		Results:      final.Results,
+		AxesUsed:     []string{"fast semantic probe", "AI-refined semantic search: " + refinedQuery},
+		AIReferences: probe.Results,
+		Expansion:    &SearchExpansion{Interpretation: expansion.Interpretation, Terms: []string{refinedQuery}, Confidence: expansion.Confidence},
+	}, nil
 }
 
 // resolveTopK returns the row cap for a search: the explicit per-call TopK when

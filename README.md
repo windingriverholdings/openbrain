@@ -56,6 +56,7 @@ All six binaries are Go, built from a single module. Interactive input (web chat
 - **Bulk import**: migrate memories from any AI in one shot (see prompt kits)
 - **Systemd daemons**: the web server and any bots run as user services with auto-restart
 - **Fully private by default**: PostgreSQL on bare metal, embeddings via a local Ollama daemon, zero telemetry (see [Privacy](#privacy) for the one opt-in exception)
+- **Conversational search**: ask questions about your stored thoughts and receive a local-model answer grounded in retrieved notes with clickable citations. See [Conversational Search](docs/conversational-search.md) for the complete execution flow.
 
 Telegram and Slack integration are scaffolded (config, systemd units, binaries) but the bots themselves are not yet implemented. Both `cmd/openbrain-telegram` and `cmd/openbrain-slack` currently log one placeholder line and exit 0.
 

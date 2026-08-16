@@ -52,3 +52,28 @@ func TestWriteEndpoint_SetToken_CorrectAccepted(t *testing.T) {
 	rr := serveWriteEndpoint(t, validToken, "/api/capture?token="+validToken)
 	require.Equal(t, http.StatusOK, rr.Code)
 }
+
+// Static assets (.js, .css, .ico, .png, .svg) bypass staticAuth without needing ?token=.
+func TestStaticAuth_StaticAssetsBypassToken(t *testing.T) {
+	assets := []string{
+		"/composer.js",
+		"/composer.css",
+		"/detail.js",
+		"/detail.css",
+		"/favicon.ico",
+		"/logo.png",
+		"/icon.svg",
+	}
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := staticAuth(validToken, inner)
+
+	for _, asset := range assets {
+		req := httptest.NewRequest(http.MethodGet, asset, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code, "static asset %s must bypass auth", asset)
+	}
+}
