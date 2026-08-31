@@ -149,7 +149,7 @@ jobs:
       # mutable tag (even an exact one like v0.10.1) is not enough here.
       # SHA resolved from refs/tags/v0.10.1 via the GitHub API.
       - name: Set up pixi (pinned v0.39.5)
-        uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
           pixi-version: v0.39.5
           environments: dev
